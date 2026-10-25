@@ -44,6 +44,15 @@ function Tg_Passengers()
   return -1;
 }
 
+function Tg_Mail()
+{
+  local list = GSCargoList();
+  for (local c = list.Begin(); !list.IsEnd(); c = list.Next()) {
+    if (GSCargo.HasCargoClass(c, GSCargo.CC_MAIL)) return c;
+  }
+  return -1;
+}
+
 function Tg_Accepts(e, c)
 {
   if (e.kind == "industry") return GSCargoList_IndustryAccepting(e.id).HasItem(c);
@@ -89,8 +98,8 @@ function Tg_Candidates(e, role, radius, other)
     list.Valuate(GSMap.DistanceManhattan, other);
     list.Sort(GSList.SORT_BY_VALUE, GSList.SORT_ASCENDING);
   } else {
-    // towns: up to 16 tiles out, so a station can sit at the edge of a dense centre
-    list = U_TilesAround(Tg_Center(e), 16);
+    // towns: up to 20 tiles out, so a station can sit at the edge of a dense centre
+    list = U_TilesAround(Tg_Center(e), 20);
   }
   return list;
 }

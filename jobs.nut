@@ -21,7 +21,7 @@ function Job_New(company, mode, a, b)
   return { company = company, mode = mode, a = a, b = b, state = "PREP",
            names = Tg_Name(a) + " - " + Tg_Name(b), actions = [], idx = 0, failed = 0,
            signs = [], cost = 0, rt = -1, rail = -1, ticks = 0, cargo = -1, plat_len = 0,
-           depot_tile = -1, veh_text = "" };
+           depot_tile = -1, veh_text = "", live = [], live_at = -15000 };
 }
 
 function Job_IsActive(job)
@@ -41,6 +41,8 @@ function Job_SearchSetup(job)
   job.max_tu <- GSController.GetSetting("max_tunnel_length");
   job.goal_tile <- -1;
   job.goal_dir <- 4;
+  job.hw <- [8, 7, 6][GSController.GetSetting("route_quality")];
+  if (!job.rawin("boost")) job.boost <- 1;
   Job_ResetCache(job);
 }
 
@@ -77,6 +79,7 @@ function Job_BeginSearch(job, start_key)
   job.wp_tol <- max(3, seg / 6);
   job.acc <- { tiles = [], kinds = [] };
   job.seg_start <- start_key;
+  job.t0 <- GSController.GetTick();   // for the time estimate in the Story Book
   Job_NewAStar(job, start_key);
 }
 
@@ -94,11 +97,14 @@ function Job_GoodWaypoint(job, wp, radius)
 function Job_NewAStar(job, key)
 {
   // a part towards a waypoint gives up sooner, so a bad waypoint costs little
-  local limit = job.wp >= 0 ? max(20000, Job_Limit() / 4) : Job_Limit();
+  local limit = (job.wp >= 0 ? max(20000, Job_Limit() / 4) : Job_Limit()) * job.boost;
   if (job.mode == MODE_ROAD)
     job.astar <- AStar(job, [key], PathRoad_Nb, PathRoad_Goal, PathRoad_H, limit);
   else
     job.astar <- AStar(job, [key], PathRail_Nb, PathRail_Goal, PathRail_H, limit);
+  // no step closer to the goal for a long time: it is boxed in, stop early
+  job.astar.stall = max(30000, limit / 3);
+  if (job.rawin("live_at")) job.live_at = -15000;
 }
 
 /* A part was found. Returns true when the whole route is done. */
@@ -131,7 +137,7 @@ function Job_SegDone(job)
 function Job_SegFailed(job)
 {
   if (job.wp < 0) return false;
-  GSLog.Info("Route: waypoint " + (job.wp_i + 1) + " not reachable, skipping it");
+  U_Diag("i", job.names + ": waypoint " + (job.wp_i + 1) + "/" + job.wps.len() + " not reachable (" + Job_Why(job) + "), skipping it.");
   job.wp_i++;
   job.wp = job.wp_i < job.wps.len() ? job.wps[job.wp_i] : -1;
   Job_NewAStar(job, job.seg_start);
@@ -143,6 +149,14 @@ function Job_SegFailed(job)
  * Returns true when a retry was started. */
 function Job_Retry(self, job, why)
 {
+  // the search ran out of room: try once more with a doubled limit
+  if (job.astar.examined > job.astar.limit && !job.astar.stalled && job.boost == 1) {
+    job.boost = 2;
+    UI_Diag(self, job.company, "!", job.names + ": search limit reached, trying again with twice the limit.");
+    UI_Status(self, job.company, job.names + ": route search ran out of room, trying again with a bigger limit ...");
+    job.state = "PREP";
+    return true;
+  }
   if (!job.rawin("retries")) job.retries <- 0;
   if (job.retries >= 2) return false;
   if (job.rawin("chain")) {
@@ -159,10 +173,56 @@ function Job_Retry(self, job, why)
   if (tiles.len() == 0) return false;   // town to town road: nothing to move
   job.retries++;
   foreach (t in tiles) job.avoid.rawset(t, true);
-  GSLog.Info(U_Clip(job.names + ": no route (" + why + "), retry " + job.retries + " with other station places"));
+  UI_Diag(self, job.company, "!", job.names + ": no route (" + why + "), retry " + job.retries + "/2 with other station places.");
   UI_Status(self, job.company, job.names + ": no route from these station places, trying other places (" + (job.retries + 1) + "/3) ...");
   job.state = "PREP";
   return true;
+}
+
+/* Rough time left from the progress so far, in game days (74 ticks each).
+ * Only a guess: a detour around a lake or hills makes it jump. */
+function Job_Eta(job, pct)
+{
+  local spent = GSController.GetTick() - job.t0;
+  if (pct < 3 || spent < 74) return "estimating time";
+  local days = spent * (100 - pct) / pct / 74;
+  return "about " + max(1, days) + " game day(s) left";
+}
+
+/* Live view on the map: every ~15000 tiles examined the signs move along
+ * the path that got closest to the goal (finished parts + current part). */
+function Job_LiveView(job)
+{
+  if (!GSController.GetSetting("search_preview")) return;
+  local a = job.astar;
+  if (a.examined - job.live_at < 15000) return;
+  job.live_at = a.examined;
+  local tiles = [];
+  foreach (t in job.acc.tiles) tiles.append(t);
+  foreach (t in a.PathFrom(a.best_node).tiles) tiles.append(t);
+  job.live = Preview_Live(job.live, tiles);
+}
+
+function Job_LiveClear(job)
+{
+  if (!job.rawin("live")) return;
+  Preview_Clear(job.live);
+  job.live = [];
+  job.live_at = -15000;
+}
+
+/* Why the current search part failed, in words. */
+function Job_Why(job)
+{
+  local a = job.astar;
+  if (a.stalled) return "stuck, no way closer than " + (a.best_h / max(1, Job_HW(job))) + " tiles to the goal";
+  if (a.examined > a.limit) return "search limit reached";
+  return "no way through";
+}
+
+function Job_HW(job)
+{
+  return job.mode == MODE_ROAD ? 3 : job.hw;
 }
 
 function Job_Limit()
@@ -173,6 +233,7 @@ function Job_Limit()
 /* Returns an error text, or null when the search was started. */
 function Job_Prep(self, job)
 {
+  ::g_nocash = 0;
   if (!Tg_Valid(job.a) || !Tg_Valid(job.b)) return "Town or industry no longer exists.";
   local link = Tg_Link(job.a, job.b);
   if (link == null) return "Nothing to carry between " + job.names + ": pick an industry that produces a cargo the other end accepts.";
@@ -249,7 +310,7 @@ function Job_Prep(self, job)
       job.build_a <- true;
       job.build_all <- false;
       UI_Progress(self, job.company, "1/3 station place at " + Tg_Name(link.from), 0);
-      GSLog.Info("Rail: type " + job.rail + ", station " + len + "x" + plat + ", looking at " + Tg_Name(link.from));
+      U_Log("i", "Rail: type " + job.rail + ", station " + len + "x" + plat + ", looking at " + Tg_Name(link.from));
       ::g_report = { self = self, company = job.company, label = "1/3 station place at " + Tg_Name(link.from), base = 0 };
       sa = BuildRail_FindSpot(link.from, "from", link.cargo, c_to, plat, len, job.blocked, false);
       ::g_report = null;
@@ -300,12 +361,24 @@ function Job_StartSecondTrack(job)
   job.goal_tile = sb.G[1 - job.r1];
   job.goal_dir = (sb.d + 2) % 4;
   Job_BeginSearch(job, K_Make(sa.G[1], sa.d, 0));
+  // the waypoints of the second track lie on the first track (not on the
+  // straight line between the towns), so it follows the first one closely
+  local p1 = job.path1.tiles;
+  if (job.wps.len() > 0 && p1.len() > 2) {
+    local n = job.wps.len() + 1;
+    job.wps = [];
+    for (local s = 1; s < n; s++) job.wps.append(p1[s * p1.len() / n]);
+    job.wp_i = 0;
+    job.wp = job.wps[0];
+    Job_NewAStar(job, job.seg_start);
+  }
   job.state = "SEARCH2";
 }
 
 /* Route found: build the action list, estimate the cost and show the preview. */
 function Job_Plan(self, job)
 {
+  Job_LiveClear(job);
   local acts = [], specials = [], pieces = [], extra = [];
   local paths = [job.path1];
   if (job.mode == MODE_ROAD) {
@@ -341,6 +414,18 @@ function Job_Plan(self, job)
       PathRail_Signals(job.path1, sp, true, extra);
       PathRail_Signals(job.path2, sp, false, extra);
     }
+    if (GSController.GetSetting("station_signals")) {
+      // station entries: path signals so trains wait for a free platform / free line
+      if (dbl) {
+        PathRail_StationSignals(sa, 1, extra);        // track 2 arrives at A on row 1
+        PathRail_StationSignals(sb, job.r1, extra);    // track 1 arrives at B on row r1
+      } else if (sa.plat >= 2) {
+        // only the ends this leg connects (a through station's other end may have no track yet)
+        extra.append({ op = "signal", t = sa.G[0], f = sa.F[0], kind = "twoway" });
+        if (job.goal_tile == sb.G[0]) extra.append({ op = "signal", t = sb.G[0], f = sb.F[0], kind = "twoway" });
+        else extra.append({ op = "signal", t = sb.Gb[0], f = sb.Fb[0], kind = "twoway" });
+      }
+    }
   }
   foreach (a in specials) acts.append(a);
   foreach (a in pieces) acts.append(a);
@@ -369,8 +454,19 @@ function Job_Plan(self, job)
   if (job.rawin("near")) job.near = {};
   Job_ResetCache(job);
 
+  UI_Diag(self, job.company, "i", "Planned " + summary + ".");
+  if (job.est_nocash > 0)
+    UI_Diag(self, job.company, "!", "NOT ENOUGH MONEY: " + job.names + ": " + job.est_nocash + " piece(s) could not even be priced (" + U_MoneyText(job.company) + "). The real cost is higher, building will pause when the money runs out.");
+  if (job.est_fail > 0)
+    UI_Diag(self, job.company, "i", job.names + ": " + job.est_fail + " piece(s) failed the test run, they may fail when building.");
   if (job.cost > limit) {
-    UI_Status(self, job.company, summary + ". Too expensive: you can spend " + limit + " (bank " + bank + ").");
+    local why = "costs about " + job.cost + ", you can spend " + limit + " (bank " + bank + ", setting cost_limit_percent)";
+    UI_Diag(self, job.company, "!", job.names + ": not built, " + why + ".");
+    UI_History(self, job.company, "NO MONEY " + Job_ModeName(job.mode) + " " + job.names + ": " + why + ".");
+    UI_Status(self, job.company, "NOT ENOUGH MONEY: " + summary + ". " + why + ". " + U_MoneyText(job.company) + ".");
+    try {
+      GSNews.Create(GSNews.NT_GENERAL, U_Clip("Build assistant: not enough money for " + job.names + " (costs about " + job.cost + ")."), job.company, GSNews.NR_NONE, 0);
+    } catch (e) {}
     Job_StopChain(self, job);
     Job_Drop(self, job);
     return;
@@ -380,8 +476,16 @@ function Job_Plan(self, job)
     Job_Confirm(self, job);
   } else {
     job.state = "CONFIRM";
-    UI_Progress(self, job.company, "route ready, waiting for Confirm build", 100);
-    UI_Status(self, job.company, summary + ". Press Confirm build or Cancel.");
+    local left = bank - job.cost;
+    UI_Ready(self, job.company, "cost about " + job.cost + ", money after about " + left +
+      (job.est_nocash > 0 ? " (NOT ENOUGH MONEY!)" : "") + ". Press Build or Cancel.");
+    UI_Diag(self, job.company, "i", "Plan ready: " + job.names + ", press Build.");
+    try {
+      GSNews.Create(GSNews.NT_GENERAL, U_Clip("Build assistant: route " + job.names + " is planned. Press Build in the Story Book."),
+                    job.company, GSNews.NR_TILE, job.news_tile);
+    } catch (e) {}
+    UI_Status(self, job.company, summary + ". Money after building about " + left +
+      (job.est_nocash > 0 ? " (NOT ENOUGH MONEY for all pieces!)" : "") + ". Press Build or Cancel.");
   }
 }
 
@@ -409,7 +513,7 @@ function Job_PlanChainStations(self, job, ch, plat, len)
     foreach (t in sp.tiles) blocked.rawset(t, true);
     if (sp.rawin("dep") && sp.dep >= 0) blocked.rawset(sp.dep, true);
     plan.append(sp);
-    GSLog.Info("Town list: station " + (i + 1) + "/" + n + " at " + Tg_Name(e) + (through ? " (through)" : ""));
+    U_Log("i", "Town list: station " + (i + 1) + "/" + n + " at " + Tg_Name(e) + (through ? " (through)" : ""));
   }
   ch.plan = plan;
   return null;
@@ -425,8 +529,12 @@ function Job_VehicleAction(job)
   local road = job.mode == MODE_ROAD;
   local count = GSController.GetSetting(road ? "veh_road" : "veh_rail");
   if (count <= 0) return null;
-  // a single track has no signals: two trains on it would crash into each other
-  if (!road && job.mode != MODE_DOUBLE) count = 1;
+  // single track: with signals at 2-platform stations the stations are passing
+  // places and 2 trains fit; otherwise a second train would block the line
+  if (!road && job.mode != MODE_DOUBLE) {
+    local passing = GSController.GetSetting("station_signals") && job.spA.plat >= 2 && ch == null;
+    count = min(count, passing ? 2 : 1);
+  }
   local points = [], resolve = false;
   if (road) {
     if (job.link.pax) {
@@ -471,6 +579,8 @@ function Job_StopChain(self, job)
 
 function Job_Drop(self, job)
 {
+  Job_LiveClear(job);
+  UI_SetText(self, job.company, "x_job", "Job: none (last: " + job.names + ", ended in state " + job.state + ")");
   Preview_Clear(job.signs);
   UI_Progress(self, job.company, "-", -1);
   if (self.jobs.rawin(job.company)) self.jobs.rawdelete(job.company);
@@ -478,8 +588,14 @@ function Job_Drop(self, job)
 
 function Job_Fail(self, job, text)
 {
+  if (::g_nocash > 0) {
+    text = "NOT ENOUGH MONEY (" + U_MoneyText(job.company) + "). " + ::g_nocash +
+           " test build(s) failed for lack of money, so this may be the real reason: " + text;
+    ::g_nocash = 0;
+  }
   Job_StopChain(self, job);
   UI_Status(self, job.company, job.names + ": " + text);
+  UI_Diag(self, job.company, "!", "FAILED " + job.names + ": " + text);
   UI_History(self, job.company, "FAILED " + Job_ModeName(job.mode) + " " + job.names + ": " + text);
   Job_Drop(self, job);
 }
@@ -487,7 +603,7 @@ function Job_Fail(self, job, text)
 function Job_Finish(self, job)
 {
   local text = Job_ModeName(job.mode) + " " + job.names + " built";
-  if (job.failed > 0) text += ", " + job.failed + " piece(s) failed (see the script debug log)";
+  if (job.failed > 0) text += ", " + job.failed + " piece(s) failed (see Log)";
   if (job.rawin("chain")) {
     // remember the stations and depot for the next legs of the town list
     if (job.chain.depot < 0) job.chain.depot = job.depot_tile;
@@ -497,12 +613,12 @@ function Job_Finish(self, job)
   else text += ". Now buy the vehicles.";
   UI_Status(self, job.company, text);
   UI_History(self, job.company, text);
-  if (job.mode != MODE_ROAD && job.rail >= 0 && job.cargo >= 0) UI_Advice(self, job.company, job.cargo, job.rail, job.plat_len);
+  UI_Diag(self, job.company, "i", text);
   local where = job.news_tile;
   try {
     GSNews.Create(GSNews.NT_GENERAL, U_Clip(text), job.company, GSNews.NR_TILE, where);
   } catch (e) {
-    GSLog.Warning("Could not send news: " + e);
+    U_Log("w", "Could not send news: " + e);
   }
   Job_Drop(self, job);
 }
@@ -514,22 +630,38 @@ function Job_Step(self, job)
   if (job.rail >= 0) GSRail.SetCurrentRailType(job.rail);
   job.ticks++;
 
+  if (job.ticks % 10 == 1) UI_DbgJob(self, job);
   if (!job.rawin("last_state") || job.last_state != job.state) {
-    GSLog.Info(U_Clip("[" + job.company + "] job " + job.names + ": state " + job.state + " (step " + job.ticks + ")"));
+    UI_DbgJob(self, job);
+    UI_DbgSettings(self, job.company);
+    U_Log("i", U_Clip("[" + job.company + "] job " + job.names + ": state " + job.state + " (step " + job.ticks + ")"));
     job.last_state <- job.state;
   }
 
   if (job.state == "PREP") {
+    Job_LiveClear(job);   // a retry starts over
     UI_Status(self, job.company, "Looking for station places for " + job.names + " ...");
     local err = Job_Prep(self, job);
-    GSLog.Info(U_Clip("[" + job.company + "] prep done: " + (err == null ? "ok, searching route" : err)));
-    if (err != null) Job_Fail(self, job, err);
+    U_Log("i", U_Clip("[" + job.company + "] prep done: " + (err == null ? "ok, searching route" : err)));
+    if (err != null) {
+      Job_Fail(self, job, err);
+      return;
+    }
+    if (job.mode != MODE_ROAD && !PathRail_GoalReachable(job)) {
+      // nothing can reach the station entry: do not search at all
+      UI_Diag(self, job.company, "!", job.names + ": the entry of the station at " + Tg_Name(job.link.to) + " is blocked.");
+      if (Job_Retry(self, job, "station entry blocked")) return;
+      Job_Fail(self, job, "The station entry is blocked and no other station place works. Try other ends.");
+      return;
+    }
+    UI_Diag(self, job.company, "i", "Searching " + job.names + ": " +
+            GSMap.DistanceManhattan(K_Tile(job.seg_start), job.goal_tile) + " tiles, " + (job.wps.len() + 1) + " part(s).");
     return;
   }
 
   if (job.state == "SEARCH" || job.state == "SEARCH2") {
     // small chunks, so the progress in the Story Book moves often
-    local r = job.astar.Step(min(300, GSController.GetSetting("search_per_tick")));
+    local r = job.astar.Step(GSController.GetSetting("search_per_tick"));
     local segs = job.wps.len() + 1;
     if (r == 0) {
       if (true) {
@@ -538,16 +670,23 @@ function Job_Step(self, job)
         UI_Progress(self, job.company, (job.state == "SEARCH2" ? "2/3 second track" : "2/3 route search") +
           ", part " + (job.wp_i + 1) + "/" + segs + " (limit used " + (a.examined * 100 / a.limit) + "%)", pct);
       }
-      if (job.ticks % 20 == 1)
-        UI_Status(self, job.company, "Searching route " + job.names + (job.state == "SEARCH2" ? " (second track)" : "") +
-          ", part " + (job.wp_i + 1) + " of " + segs + " ...");
+      Job_LiveView(job);
+      // about every 6000 tiles examined, whatever the step size
+      local every = max(1, 6000 / max(1, GSController.GetSetting("search_per_tick")));
+      if (job.ticks % every == 0) {
+        local a = job.astar;
+        local pct = max(0, min(99, (job.wp_i * 100 + a.Closeness()) / segs));
+        UI_Status(self, job.company, "Searching " + job.names + (job.state == "SEARCH2" ? " (second track)" : "") +
+          ": " + pct + "%, " + Job_Eta(job, pct) + ", part " + (job.wp_i + 1) + "/" + segs + ", " + a.examined / 1000 +
+          "k tiles examined, closest " + (a.best_h < 0 ? "?" : (a.best_h / max(1, Job_HW(job))).tostring()) + " tiles from the goal");
+      }
       return;
     }
     if (r < 0) {
       if (Job_SegFailed(job)) return;   // waypoint skipped, trying again
-      local why = job.astar.examined > job.astar.limit ? "search limit reached" : "no way through";
+      local why = Job_Why(job);
       if (Job_Retry(self, job, why)) return;
-      Job_Fail(self, job, "No route found (" + why + "). Try other ends, allow longer bridges or raise the search limit.");
+      Job_Fail(self, job, "No route found (" + why + ", " + job.astar.examined + " tiles examined). Try other ends, allow longer bridges or raise search_limit.");
       return;
     }
     if (!Job_SegDone(job)) return;      // next part of the route
@@ -573,10 +712,18 @@ function Job_Step(self, job)
         if (err == GSError.ERR_NOT_ENOUGH_CASH) {
           job.state = "PAUSED";
           UI_Progress(self, job.company, "paused, out of money", job.idx * 100 / job.actions.len());
-          UI_Status(self, job.company, job.names + ": out of money at step " + job.idx + "/" + job.actions.len() + ". Press Resume when you have money.");
+          UI_Diag(self, job.company, "!", "NOT ENOUGH MONEY: " + job.names + " paused at " + Act_Describe(a) + " (" + U_MoneyText(job.company) + "). Press Resume when you have money.");
+          UI_Status(self, job.company, "NOT ENOUGH MONEY: " + job.names + " paused at step " + job.idx + "/" + job.actions.len() + " (" + U_MoneyText(job.company) + "). Press Resume when you have money.");
+          UI_History(self, job.company, "PAUSED, NO MONEY " + Job_ModeName(job.mode) + " " + job.names + " at step " + job.idx + "/" + job.actions.len() + ".");
+          try {
+            GSNews.Create(GSNews.NT_GENERAL, U_Clip("Build assistant: not enough money for " + job.names + ". Building paused, press Resume in the Story Book."), job.company, GSNews.NR_NONE, 0);
+          } catch (e) {}
           return;
         }
-        GSLog.Warning(U_Clip(job.names + ": " + Act_Describe(a) + " failed: " + GSError.GetLastErrorString()));
+        local msg = Act_Describe(a) + " failed: " + GSError.GetLastErrorString();
+        // only the first few failures go to the page, all go to the script log
+        if (job.failed < 3 || a.rawin("critical")) UI_Diag(self, job.company, "!", job.names + ": " + msg);
+        else U_Log("w", U_Clip(job.names + ": " + msg));
         if (a.rawin("critical")) {
           Job_Fail(self, job, "Could not build " + a.op + ": " + GSError.GetLastErrorString());
           return;

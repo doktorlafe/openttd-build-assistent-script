@@ -62,6 +62,23 @@ function Veh_Train(depot, rail, cargo, plat_len)
   local v = GSVehicle.BuildVehicle(depot, loco);
   if (!GSVehicle.IsValidVehicle(v)) return [-1, GSError.GetLastErrorString()];
   local max_len = plat_len * 16;   // vehicle length is in 1/16 of a tile
+  // passenger trains: mail wagons right behind the engine (1 per 4 platform tiles)
+  local mail_n = 0;
+  local mail = Tg_Mail();
+  if (mail >= 0 && GSController.GetSetting("rail_mail") && GSCargo.HasCargoClass(cargo, GSCargo.CC_PASSENGERS)) {
+    local mw = Adv_Wagon(mail, rail, GSEngine.GetMaxSpeed(loco));
+    if (mw < 0) U_Log("i", "Train: no mail wagon for this rail type, passengers only");
+    for (local i = 0; mw >= 0 && i < max(1, plat_len / 4); i++) {
+      local w = Veh_Build(depot, mw, mail);
+      if (!GSVehicle.IsValidVehicle(w)) break;
+      if (!GSVehicle.MoveWagon(w, 0, v, GSVehicle.GetNumWagons(v) - 1) || GSVehicle.GetLength(v) > max_len) {
+        if (GSVehicle.IsValidVehicle(w)) GSVehicle.SellVehicle(w);
+        else GSVehicle.SellWagon(v, GSVehicle.GetNumWagons(v) - 1);
+        break;
+      }
+      mail_n++;
+    }
+  }
   for (local i = 0; i < plat_len * 2; i++) {
     local w = Veh_Build(depot, wagon, cargo);
     if (!GSVehicle.IsValidVehicle(w)) break;
@@ -74,7 +91,7 @@ function Veh_Train(depot, rail, cargo, plat_len)
       break;
     }
   }
-  return [v, ""];
+  return [v, "", mail_n];
 }
 
 /* Orders: stops in the given order, full load at the first one if asked. */
@@ -83,7 +100,7 @@ function Veh_Orders(v, stops, full_first)
   for (local i = 0; i < stops.len(); i++) {
     local flags = (i == 0 && full_first) ? GSOrder.OF_FULL_LOAD_ANY : GSOrder.OF_NONE;
     if (!GSOrder.AppendOrder(v, stops[i], flags)) {
-      GSLog.Warning("Order to " + stops[i] + " failed: " + GSError.GetLastErrorString());
+      U_Log("w", "Order to " + stops[i] + " failed: " + GSError.GetLastErrorString());
       return false;
     }
   }
@@ -97,11 +114,12 @@ function Veh_Buy(a, depot)
   if (a.count <= 0) return "";
   if (depot < 0) return " Vehicles: no depot found.";
   if (a.stops.len() < 2) return " Vehicles: stations not found.";
-  local first = -1, why = "";
+  local first = -1, why = "", mail_n = 0;
   if (a.kind == "rail") {
     local r = Veh_Train(depot, a.rail, a.cargo, a.plat_len);
     first = r[0];
     why = r[1];
+    if (r.len() > 2) mail_n = r[2];
   } else {
     local e = Veh_RoadEngine(a.cargo);
     if (e < 0) return " Vehicles: no road vehicle for " + GSCargo.GetName(a.cargo) + ".";
@@ -122,6 +140,9 @@ function Veh_Buy(a, depot)
     n++;
   }
   local text = " Bought " + n + "x " + GSEngine.GetName(GSVehicle.GetEngineType(first));
-  if (a.kind == "rail") text += " with " + (GSVehicle.GetNumWagons(first) - 1) + " wagons";
+  if (a.kind == "rail") {
+    text += " with " + (GSVehicle.GetNumWagons(first) - 1) + " wagons";
+    if (mail_n > 0) text += " (" + mail_n + " for mail)";
+  }
   return text + ".";
 }

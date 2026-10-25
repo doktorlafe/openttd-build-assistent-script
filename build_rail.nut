@@ -94,7 +94,7 @@ function BuildRail_Candidates(e, role, radius, other, len)
   local own = GSStationList(GSStation.STATION_TRAIN);
   for (local st = own.Begin(); !own.IsEnd(); st = own.Next()) {
     local loc = GSStation.GetLocation(st);
-    if (GSMap.DistanceManhattan(loc, center) > 20) continue;
+    if (GSMap.DistanceManhattan(loc, center) > 30) continue;
     local around = U_TilesAround(loc, len + 4);
     for (local t = around.Begin(); !around.IsEnd(); t = around.Next()) {
       if (!seen.rawin(t)) { seen.rawset(t, true); out.append(t); }
@@ -107,6 +107,20 @@ function BuildRail_Candidates(e, role, radius, other, len)
   return out;
 }
 
+/* Can the line leave a station over tile t in direction d? Free land, or a
+ * road the track can cross at a right angle (not one running along the line). */
+function BuildRail_ExitOk(t, d, blocked)
+{
+  if (t < 0 || blocked.rawin(t)) return false;
+  if (GSTile.IsBuildable(t)) return true;
+  if (!GSRoad.IsRoadTile(t) || GSRoad.IsRoadStationTile(t) || GSRoad.IsRoadDepotTile(t)) return false;
+  if (!U_IsFlat(t) || U_IsSpecial(t)) return false;
+  local a = U_Step(t, d), b = U_Step(t, (d + 2) % 4);
+  if (a >= 0 && GSRoad.AreRoadTilesConnected(t, a)) return false;
+  if (b >= 0 && GSRoad.AreRoadTilesConnected(t, b)) return false;
+  return true;
+}
+
 /* Checks one station layout. level = may level the land first.
  * Sets sp.level (and sp.la / sp.lb) and returns true when it can be built. */
 function BuildRail_Check(e, role, cargo, sp, blocked, radius, level)
@@ -116,16 +130,16 @@ function BuildRail_Check(e, role, cargo, sp, blocked, radius, level)
   }
   // the line must be able to leave the station: the tile after G has to be free land or a road
   foreach (g in sp.G) {
-    local beyond = U_Step(g, sp.d);
-    if (beyond < 0 || blocked.rawin(beyond) || !(GSTile.IsBuildable(beyond) || GSRoad.IsRoadTile(beyond))) return false;
+    if (!BuildRail_ExitOk(U_Step(g, sp.d), sp.d, blocked)) return false;
   }
   if (sp.rawin("Gb")) {
-    local beyond = U_Step(sp.Gb[0], (sp.d + 2) % 4);
-    if (beyond < 0 || blocked.rawin(beyond) || !(GSTile.IsBuildable(beyond) || GSRoad.IsRoadTile(beyond))) return false;
+    local back = (sp.d + 2) % 4;
+    if (!BuildRail_ExitOk(U_Step(sp.Gb[0], back), back, blocked)) return false;
   }
   if (!Tg_SpotOk(e, role, cargo, sp.anchor, sp.w, sp.h, radius)) return false;
   local tm = GSTestMode();
   local fits = GSRail.BuildRailStation(sp.anchor, sp.axis, sp.plat, sp.len, GSStation.STATION_JOIN_ADJACENT);
+  if (!fits) U_NoCash();
   if (!level) {
     if (!fits) return false;
     sp.level <- false;
@@ -140,7 +154,10 @@ function BuildRail_Check(e, role, cargo, sp, blocked, radius, level)
   }
   sp.la <- GSMap.GetTileIndex(minx, miny);
   sp.lb <- GSMap.GetTileIndex(maxx + 1, maxy + 1);
-  if (!GSTile.LevelTiles(sp.la, sp.lb)) return false;
+  if (!GSTile.LevelTiles(sp.la, sp.lb)) {
+    U_NoCash();
+    return false;
+  }
   sp.level <- true;
   return true;
 }
@@ -155,7 +172,7 @@ function BuildRail_ExtendLayouts(e, other, plat, len, through)
   local center = Tg_Center(e);
   local own = GSStationList(GSStation.STATION_TRAIN);
   for (local st = own.Begin(); !own.IsEnd(); st = own.Next()) {
-    if (GSMap.DistanceManhattan(GSStation.GetLocation(st), center) > 20) continue;
+    if (GSMap.DistanceManhattan(GSStation.GetLocation(st), center) > 30) continue;
     local tiles = GSTileList_StationType(st, GSStation.STATION_TRAIN);
     if (tiles.IsEmpty()) continue;
     local minx = 100000, miny = 100000, maxx = 0, maxy = 0;
@@ -200,18 +217,18 @@ function BuildRail_FindSpot(e, role, cargo, other, plat, len, blocked, through)
   foreach (level in passes) {
     foreach (sp in BuildRail_ExtendLayouts(e, other, plat, len, through)) {
       if (BuildRail_Check(e, role, cargo, sp, blocked, radius, level)) {
-        GSLog.Info("Rail: extending station " + GSStation.GetName(sp.join) + (level ? " (land levelled)" : ""));
+        U_Log("i", "Rail: extending station " + GSStation.GetName(sp.join) + (level ? " (land levelled)" : ""));
         return sp;
       }
     }
   }
 
   local cands = BuildRail_Candidates(e, role, radius + len, other, len);
-  local total = passes.len() * min(cands.len(), 1200), done = 0;
+  local total = passes.len() * min(cands.len(), 2000), done = 0;
   foreach (level in passes) {
     local tried = 0;
     foreach (e0 in cands) {
-      if (++tried > 1200) break;
+      if (++tried > 2000) break;
       if (++done % 40 == 0) U_Report(done * 100 / max(1, total));
       if (blocked.rawin(e0) || !GSTile.IsBuildable(e0)) continue;
       foreach (d in U_DirsToward(e0, other)) {
@@ -219,12 +236,12 @@ function BuildRail_FindSpot(e, role, cargo, other, plat, len, blocked, through)
         local sp = BuildRail_Layout(e0, d, plat, len, through);
         if (sp == null) continue;
         if (!BuildRail_Check(e, role, cargo, sp, blocked, radius, level)) continue;
-        GSLog.Info("Rail: station place found after " + tried + " tiles" + (level ? ", the land will be levelled" : ""));
+        U_Log("i", "Rail: station place found after " + tried + " tiles" + (level ? ", the land will be levelled" : ""));
         return sp;
       }
     }
   }
-  GSLog.Info("Rail: no station place found");
+  U_Diag("!", "No free " + len + "x" + plat + " station place at " + Tg_Name(e) + " (" + cands.len() + " tiles checked" + (passes.len() < 2 ? ", land levelling is off" : "") + ").");
   return null;
 }
 

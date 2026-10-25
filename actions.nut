@@ -58,8 +58,12 @@ function Act_Run(job, a)
     job.veh_text = Veh_Buy(a, depot);
     return true;
   }
-  if (op == "signal") return GSRail.BuildSignal(a.t, a.f, GSRail.SIGNALTYPE_PBS_ONEWAY);
-  GSLog.Warning("Unknown action " + op);
+  if (op == "signal") {
+    local type = (a.rawin("kind") && a.kind == "twoway") ? GSRail.SIGNALTYPE_PBS : GSRail.SIGNALTYPE_PBS_ONEWAY;
+    if (GSRail.GetSignalType(a.t, a.f) == type) return true;
+    return GSRail.BuildSignal(a.t, a.f, type);
+  }
+  U_Log("w", "Unknown action " + op);
   return false;
 }
 
@@ -69,9 +73,15 @@ function Act_Estimate(job, actions)
 {
   local tm = GSTestMode();
   local acc = GSAccounting();
+  job.est_nocash <- 0;
+  job.est_fail <- 0;
   foreach (a in actions) {
     if (a.op == "rail_depot" || a.op == "rail_depot_end" || a.op == "road_depot" || a.op == "signal" || a.op == "vehicles") continue;
-    Act_Run(job, a);
+    if (!Act_Run(job, a)) {
+      // the test run also checks money: such pieces are missing from the sum
+      if (GSError.GetLastError() == GSError.ERR_NOT_ENOUGH_CASH) job.est_nocash++;
+      else job.est_fail++;
+    }
   }
   return acc.GetCosts();
 }
