@@ -19,6 +19,10 @@ class AStar {
   found = -1;
   h0 = -1;       // estimate at the start
   best_h = -1;   // closest the search got to the goal
+  last_imp = 0;  // examined count when best_h last improved
+  stall = 0;     // give up after this many tiles without getting closer (0 = never)
+  stalled = false;
+  best_node = -1; // node closest to the goal so far (live preview)
 
   /* How close the search got to the goal, 0..100. */
   function Closeness() {
@@ -61,7 +65,15 @@ class AStar {
       if (++this.examined > this.limit) return -1;
       local hc = this.h(this.ctx, cur);
       if (this.h0 < 0) this.h0 = hc;
-      if (hc < this.best_h || this.best_h < 0) this.best_h = hc;
+      if (hc < this.best_h || this.best_h < 0) {
+        this.best_h = hc;
+        this.last_imp = this.examined;
+        this.best_node = cur;
+      }
+      if (this.stall > 0 && this.examined - this.last_imp > this.stall) {
+        this.stalled = true;
+        return -1;
+      }
       local gc = this.g.rawget(cur);
       foreach (e in this.nb(this.ctx, cur, this.kind.rawget(cur))) {
         local k = e[0];
@@ -80,8 +92,14 @@ class AStar {
 
   /* Path as two arrays: tiles and how each tile was reached. */
   function Path() {
+    return this.PathFrom(this.found);
+  }
+
+  /* Path from the start to any examined node. */
+  function PathFrom(node) {
     local tiles = [], kinds = [];
-    for (local k = this.found; k != -1; k = this.came.rawget(k)) {
+    if (node == -1) return { tiles = tiles, kinds = kinds };
+    for (local k = node; k != -1; k = this.came.rawget(k)) {
       tiles.append(K_Tile(k));
       kinds.append(this.kind.rawget(k));
     }

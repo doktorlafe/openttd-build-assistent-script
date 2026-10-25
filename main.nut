@@ -18,6 +18,8 @@ class LafeBuildAssistant extends GSController {
   picks = null;   // company -> { mode, a, b }
   jobs = null;    // company -> job
   hist = null;    // company -> [texts]
+  logs = null;    // company -> [diagnostic lines]
+  dlogs = null;   // company -> [technical log lines] (debug page, not saved)
   titles = null;  // company -> current page title
   queue = null;   // company -> legs still to build from a town list
   chains = null;  // company -> { list, spots, depot } of the town list being built
@@ -28,6 +30,8 @@ class LafeBuildAssistant extends GSController {
     this.picks = {};
     this.jobs = {};
     this.hist = {};
+    this.logs = {};
+    this.dlogs = {};
     this.titles = {};
     this.queue = {};
     this.chains = {};
@@ -38,8 +42,8 @@ class LafeBuildAssistant extends GSController {
   function Load(version, data);
   function HandleEvent(ev);
   function OnButton(company, name);
-  function OnAdvicePick(company, tile);
   function PlanList(company, p);
+  function ListFromSigns(company, p);
   function RunJobs();
 }
 
@@ -50,7 +54,7 @@ function LafeBuildAssistant::Save()
     local d = Job_SaveData(job);
     if (d != null) jobs.rawset(c, d);
   }
-  return { pages = this.pages, picks = this.picks, hist = this.hist, jobs = jobs, queue = this.queue, chains = this.chains };
+  return { pages = this.pages, picks = this.picks, hist = this.hist, logs = this.logs, jobs = jobs, queue = this.queue, chains = this.chains };
 }
 
 function LafeBuildAssistant::Load(version, data)
@@ -58,6 +62,7 @@ function LafeBuildAssistant::Load(version, data)
   if (data.rawin("pages")) this.pages = data.rawget("pages");
   if (data.rawin("picks")) this.picks = data.rawget("picks");
   if (data.rawin("hist")) this.hist = data.rawget("hist");
+  if (data.rawin("logs")) this.logs = data.rawget("logs");
   if (data.rawin("queue")) this.queue = data.rawget("queue");
   if (data.rawin("chains")) this.chains = data.rawget("chains");
   if (data.rawin("jobs")) {
@@ -67,8 +72,9 @@ function LafeBuildAssistant::Load(version, data)
 
 function LafeBuildAssistant::Start()
 {
-  GSLog.Info("Lafe Build Assistant v2 started");
+  U_Log("i", "Lafe Build Assistant v3 started");
   this.Sleep(1);
+  try { Preview_CleanLeftovers(); } catch (e) {}
   for (local i = 0; i < 15; i++) {
     local c = GSCompany.ResolveCompanyID(i);
     if (c != GSCompany.COMPANY_INVALID) UI_Ensure(this, c);
@@ -80,14 +86,14 @@ function LafeBuildAssistant::Start()
       try {
         this.HandleEvent(ev);
       } catch (e) {
-        GSLog.Error(U_Clip("Event failed: " + e));
+        U_Log("e", U_Clip("Event failed: " + e));
       }
     }
     local busy = false;
     try {
       busy = this.RunJobs();
     } catch (e) {
-      GSLog.Error(U_Clip("Job failed: " + e));
+      U_Log("e", U_Clip("Job failed: " + e));
       // drop the job that crashed so it does not crash again
       foreach (c, job in this.jobs) {
         if (Job_IsActive(job)) {
@@ -132,7 +138,15 @@ function LafeBuildAssistant::RunJobs()
     return true;
   }
   local mode = GSCompanyMode(company);
-  Job_Step(this, job);
+  ::g_ctx = { self = this, company = company };
+  try {
+    Job_Step(this, job);
+  } catch (e) {
+    ::g_ctx = null;
+    UI_Diag(this, company, "!", "Internal error in " + job.names + ": " + e);
+    throw e;
+  }
+  ::g_ctx = null;
   return true;
 }
 
@@ -150,10 +164,6 @@ function LafeBuildAssistant::HandleEvent(ev)
     local e = GSEventStoryPageTileSelect.Convert(ev);
     local company = e.GetCompanyID();
     local name = UI_ElementName(this, company, e.GetElementID());
-    if (name == "adv_pick") {
-      this.OnAdvicePick(company, e.GetTile());
-      return;
-    }
     if (name == "loop_pick") {
       local town = GSTile.GetClosestTown(e.GetTile());
       if (!GSTown.IsValidTown(town)) {
@@ -165,6 +175,7 @@ function LafeBuildAssistant::HandleEvent(ev)
       local text = Loop_Build(town, GSController.GetSetting("loop_stops"), GSController.GetSetting("loop_gap"),
                               GSController.GetSetting("veh_loop"));
       UI_SetText(this, company, "loop_result", text);
+      UI_Diag(this, company, "i", text);
       UI_Status(this, company, text);
       UI_History(this, company, text);
       return;
@@ -178,7 +189,7 @@ function LafeBuildAssistant::HandleEvent(ev)
     local p = UI_Pick(this, company);
     if (name == "list_add") {
       if (p.list.len() >= 10) {
-        UI_Status(this, company, "The list is full (10). Press Clear list to start again.");
+        UI_Status(this, company, "The list is full (10). Press Clear to start again.");
         return;
       }
       local last = p.list.len() > 0 ? p.list[p.list.len() - 1] : null;
@@ -197,25 +208,52 @@ function LafeBuildAssistant::HandleEvent(ev)
     local e = GSEventStoryPageButtonClick.Convert(ev);
     local company = e.GetCompanyID();
     local name = UI_ElementName(this, company, e.GetElementID());
-    if (name != null) this.OnButton(company, name);
+    if (name != null) {
+      UI_Dbg(this, company, "button " + name);
+      ::g_ctx = { self = this, company = company };
+      try {
+        this.OnButton(company, name);
+      } catch (ex) {
+        ::g_ctx = null;
+        throw ex;
+      }
+      ::g_ctx = null;
+    }
   }
 }
 
-/* Train advice for a clicked rail station (its platform length and cargo)
- * or a depot / track (default station length, passengers). */
-function LafeBuildAssistant::OnAdvicePick(company, tile)
+/* Adds the company's signs to the list, in the order they were placed
+ * (sign ids grow), and removes them. The sign tool stays active in the game,
+ * so many towns can be marked click after click. */
+function LafeBuildAssistant::ListFromSigns(company, p)
 {
-  if (!GSRail.IsRailTile(tile) && !GSRail.IsRailStationTile(tile) && !GSRail.IsRailDepotTile(tile)) {
-    UI_Status(this, company, "Click a rail station, depot or track for train advice.");
+  local mode = GSCompanyMode(company);
+  local ids = GSSignList();
+  ids.Sort(GSList.SORT_BY_ITEM, GSList.SORT_ASCENDING);
+  local added = 0, skipped = 0, found = 0;
+  for (local s = ids.Begin(); !ids.IsEnd(); s = ids.Next()) {
+    local owner = GSCompany.COMPANY_INVALID;
+    try { owner = GSSign.GetOwner(s); } catch (e) {}
+    if (owner != company) continue;
+    if (Preview_IsOwnSign(GSSign.GetName(s))) continue;   // route preview / live search signs
+    found++;
+    local target = Tg_FromTile(GSSign.GetLocation(s));
+    local last = p.list.len() > 0 ? p.list[p.list.len() - 1] : null;
+    if (target == null || p.list.len() >= 10 || (last != null && last.kind == target.kind && last.id == target.id)) {
+      skipped++;
+    } else {
+      p.list.append(target);
+      added++;
+    }
+    GSSign.RemoveSign(s);
+  }
+  UI_Selection(this, company);
+  if (found == 0) {
+    UI_Status(this, company, "No signs of your company. Use the sign tool and click the towns one after another, then press List from signs.");
     return;
   }
-  local mode = GSCompanyMode(company);
-  local rail = GSRail.GetRailType(tile);
-  local len = Adv_PlatformLength(tile);
-  if (len < 0) len = GSController.GetSetting("rail_station_length");
-  local cargo = GSRail.IsRailStationTile(tile) ? Adv_StationCargo(tile) : Tg_Passengers();
-  UI_Advice(this, company, cargo, rail, len);
-  UI_Status(this, company, "Train advice updated.");
+  UI_Status(this, company, "Added " + added + " from signs" + (skipped > 0 ? ", " + skipped + " skipped (same as the one before, nothing there, or the list is full)" : "") +
+    ". Press Plan, or Cancel to throw the list away.");
 }
 
 /* Town list: one leg per neighbour pair, built one after another without
@@ -235,6 +273,7 @@ function LafeBuildAssistant::PlanList(company, p)
     local dist = GSMap.DistanceManhattan(Tg_Center(a), Tg_Center(b));
     if (dist > max_dist) {
       UI_Status(this, company, Tg_Name(a) + " - " + Tg_Name(b) + " is " + dist + " tiles, the limit is " + max_dist + ". Change the list.");
+      UI_Diag(this, company, "!", "List refused: " + Tg_Name(a) + " - " + Tg_Name(b) + " is " + dist + " tiles (limit " + max_dist + ", setting max_distance).");
       return;
     }
     legs.append({ mode = p.mode, a = { kind = a.kind, id = a.id }, b = { kind = b.kind, id = b.id }, n = i + 1, total = list.len() - 1 });
@@ -263,6 +302,8 @@ function LafeBuildAssistant::OnButton(company, name)
   if (name == "mode_road" || name == "mode_rail" || name == "mode_double") {
     p.mode = name == "mode_road" ? MODE_ROAD : (name == "mode_rail" ? MODE_RAIL : MODE_DOUBLE);
     UI_Selection(this, company);
+  } else if (name == "list_signs") {
+    this.ListFromSigns(company, p);
   } else if (name == "list_clear") {
     p.list = [];
     UI_Selection(this, company);
@@ -277,7 +318,7 @@ function LafeBuildAssistant::OnButton(company, name)
       return;
     }
     if (!Tg_Valid(p.a) || !Tg_Valid(p.b)) {
-      UI_Status(this, company, "Pick end A and end B first.");
+      UI_Status(this, company, "Pick A and B first.");
       return;
     }
     if (p.a.kind == p.b.kind && p.a.id == p.b.id) {
@@ -288,21 +329,35 @@ function LafeBuildAssistant::OnButton(company, name)
     local max_dist = GSController.GetSetting("max_distance");
     if (dist > max_dist) {
       UI_Status(this, company, "The ends are " + dist + " tiles apart, the limit is " + max_dist + ".");
+      UI_Diag(this, company, "!", "Plan refused: ends " + dist + " tiles apart (limit " + max_dist + ", setting max_distance).");
       return;
     }
-    GSLog.Info("[" + company + "] new job, mode " + p.mode);
+    if (GSCompany.GetBankBalance(company) <= 0) {
+      UI_Diag(this, company, "!", "NOT ENOUGH MONEY: your bank balance is " + GSCompany.GetBankBalance(company) +
+              ". Planning goes on, but station places, bridges and tunnels need money even to be tested. " + U_MoneyText(company) + ".");
+    }
+    U_Log("i", "[" + company + "] new job, mode " + p.mode);
     this.jobs.rawset(company, Job_New(company, p.mode, { kind = p.a.kind, id = p.a.id }, { kind = p.b.kind, id = p.b.id }));
     UI_Status(this, company, "Planning " + Job_ModeName(p.mode) + " " + Tg_Name(p.a) + " - " + Tg_Name(p.b) + " ...");
   } else if (name == "confirm") {
     if (job == null || job.state != "CONFIRM") {
-      UI_Status(this, company, "Nothing to confirm. Press Plan route first.");
+      UI_Status(this, company, "Nothing to build. Press Plan first.");
       return;
     }
     local mode = GSCompanyMode(company);
     Job_Confirm(this, job);
   } else if (name == "cancel") {
     if (job == null) {
-      UI_Status(this, company, "Nothing to cancel.");
+      // nothing running: Cancel throws away the selection instead
+      if (p.list.len() > 0 || p.a != null || p.b != null) {
+        p.list = [];
+        p.a = null;
+        p.b = null;
+        UI_Selection(this, company);
+        UI_Status(this, company, "Selection cleared.");
+      } else {
+        UI_Status(this, company, "Nothing to cancel.");
+      }
       return;
     }
     local mode = GSCompanyMode(company);

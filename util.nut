@@ -133,6 +133,47 @@ function U_Report(pct)
   UI_Progress(g_report.self, g_report.company, g_report.label, g_report.base + pct / 2);
 }
 
+/* Diagnostics from code that does not know the company (station search etc.).
+ * RunJobs sets g_ctx = { self, company } around each job step. */
+g_ctx <- null;
+
+function U_Diag(level, text)
+{
+  if (g_ctx == null) { GSLog.Info(U_Clip(text)); return; }
+  UI_Diag(g_ctx.self, g_ctx.company, level, text);
+}
+
+/* Script log line that also shows on the debug page of the company whose
+ * job is running (g_ctx). level: "i", "w" or "e". */
+function U_Log(level, text)
+{
+  text = U_Clip(text);
+  if (level == "e") GSLog.Error(text);
+  else if (level == "w") GSLog.Warning(text);
+  else GSLog.Info(text);
+  if (g_ctx != null) UI_Dbg(g_ctx.self, g_ctx.company, (level == "e" ? "ERROR " : (level == "w" ? "WARN " : "")) + text);
+}
+
+/* Test builds (station places, bridges, tunnels) also check money. When the
+ * company is short of cash they fail, and the search would only say "no place"
+ * or "no route". U_NoCash() counts such failures in g_nocash, so the job can
+ * tell the player the real reason. */
+g_nocash <- 0;
+
+function U_NoCash()
+{
+  if (GSError.GetLastError() == GSError.ERR_NOT_ENOUGH_CASH) ::g_nocash++;
+}
+
+/* Money text for the Story Book: bank balance and how much more can be borrowed. */
+function U_MoneyText(company)
+{
+  local mode = GSCompanyMode(company);   // loan amounts are read for the current company
+  local bank = GSCompany.GetBankBalance(company);
+  local more = GSCompany.GetMaxLoanAmount() - GSCompany.GetLoanAmount();
+  return "bank " + bank + (more > 0 ? ", you can still borrow " + more + " (Finances window)" : ", loan is at maximum");
+}
+
 /* Operations left before the script is suspended for this tick. */
 function U_OpsLeft()
 {
@@ -159,17 +200,26 @@ function U_TestBridge(vt, a, b)
   local id = U_PickBridge(GSMap.DistanceManhattan(a, b) + 1);
   if (id < 0) return false;
   local tm = GSTestMode();
-  return GSBridge.BuildBridge(vt, id, a, b);
+  if (GSBridge.BuildBridge(vt, id, a, b)) return true;
+  U_NoCash();
+  return false;
 }
 
 function U_TestTunnel(vt, a)
 {
   local tm = GSTestMode();
-  return GSTunnel.BuildTunnel(vt, a);
+  if (GSTunnel.BuildTunnel(vt, a)) return true;
+  U_NoCash();
+  return false;
 }
 
-/* State keys for the route search: tile, arrival direction, last turn. */
-function K_Make(tile, dir, turn) { return tile * 16 + dir * 3 + turn; }
-function K_Tile(k) { return k >> 4; }
-function K_Dir(k)  { return (k & 15) / 3; }
-function K_Turn(k) { return (k & 15) % 3; }
+/* State keys for the route search: tile, arrival direction (0..4), last turn (0..4).
+ * Turn: 0 = straight, 1/2 = left/right after straight track (start of a bend),
+ * 3/4 = left/right that continues a diagonal (the turn before went the other way). */
+function K_Make(tile, dir, turn) { return tile * 32 + dir * 5 + turn; }
+function K_Tile(k) { return k >> 5; }
+function K_Dir(k)  { return (k & 31) / 5; }
+function K_Turn(k) { return (k & 31) % 5; }
+
+/* Side of a turn state: 0 = none, 1 = left, 2 = right. */
+function K_Side(turn) { return turn == 0 ? 0 : (turn - 1) % 2 + 1; }

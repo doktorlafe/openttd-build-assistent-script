@@ -1,7 +1,9 @@
 /* Rail route search callbacks for AStar.
  * A node is (tile, arrival direction, last turn). Two turns the same way in a
- * row are forbidden, because the track pieces would not connect. Turns cost
- * extra so the line stays straight where it can.
+ * row are forbidden, because the track pieces would not connect. Diagonals
+ * (left, right, left ...) are cheap. A sharp bend - straight, one curve piece,
+ * straight again - costs extra, because trains slow down a lot there; the
+ * search prefers a smooth bend through a short diagonal instead.
  *
  * One tile is visited in up to 12 states, so everything we learn about a tile
  * is cached in the job (job.cc, job.xc, job.bc, job.tc). */
@@ -13,7 +15,9 @@ function PathRail_Cost(job, t)
   local c = -1;
   if (!job.blocked.rawin(t) && !U_IsSpecial(t) && GSTile.IsBuildable(t)) {
     c = U_IsFlat(t) ? 5 : 8;
-    if (job.rawin("near") && job.near.rawin(t)) c -= 3;   // second track: stay next to the first
+    // second track: right next to the first is very cheap, anywhere else expensive,
+    // so the two tracks run side by side and take as little land as possible
+    if (job.rawin("near") && job.near.len() > 0) c = job.near.rawin(t) ? 1 : c + 6;
   }
   job.cc.rawset(t, c);
   return c;
@@ -115,17 +119,25 @@ function PathRail_Nb(job, cur, kind)
     if (i == (dir + 1) % 4) turn = 1;
     else if (i == (dir + 3) % 4) turn = 2;
     if (straight && turn != 0) continue;
-    if (turn != 0 && turn == last) continue;
+    local side = K_Side(last);
+    if (turn != 0 && turn == side) continue;
+    // extra cost: start of a bend 2, diagonal continues 1, straight right after a single curve piece 6
+    local extra = 0, state = turn;
+    if (turn != 0) {
+      if (side != 0) { state = turn + 2; extra = 1; } else extra = 2;
+    } else if (last == 1 || last == 2) {
+      extra = 6;
+    }
     local n = U_Step(tile, i);
     if (n < 0) continue;
     if (n == job.goal_tile) {
-      if (i == job.goal_dir && turn == 0) out.append([K_Make(n, i, 0), 1, 0]);
+      if (i == job.goal_dir && turn == 0) out.append([K_Make(n, i, 0), 1 + extra, 0]);
       continue;
     }
     local c = PathRail_Cost(job, n);
-    if (c < 0 && turn == 0 && PathRail_CanCross(job, n, i)) c = 12;
+    if (c < 0 && turn == 0 && PathRail_CanCross(job, n, i)) c = 20;   // level crossings slow trains and cause crashes
     if (c >= 0) {
-      out.append([K_Make(n, i, turn), c + (turn != 0 ? 3 : 0), 0]);
+      out.append([K_Make(n, i, state), c + extra, 0]);
       continue;
     }
     // blocked straight ahead: bridge with its head on this tile
@@ -142,6 +154,16 @@ function PathRail_Nb(job, cur, kind)
   return out;
 }
 
+/* Can the search reach the goal tile at all? The last step must come
+ * straight from the tile in front of it. */
+function PathRail_GoalReachable(job)
+{
+  local back = (job.goal_dir + 2) % 4;
+  local t = U_Step(job.goal_tile, back);
+  if (t < 0) return false;
+  return PathRail_Cost(job, t) >= 0 || PathRail_CanCross(job, t, job.goal_dir);
+}
+
 /* Goal: the station entry, or (for a part of a long route) any tile near the
  * waypoint that was not reached over a bridge or tunnel. */
 function PathRail_Goal(job, k, kind)
@@ -150,11 +172,12 @@ function PathRail_Goal(job, k, kind)
   return K_Tile(k) == job.goal_tile && K_Dir(k) == job.goal_dir;
 }
 
-/* Slightly more than the real minimum (5 per tile): the search goes
- * straight for the target and examines far fewer tiles. */
+/* More than the real minimum (5 per tile): the search goes straight for the
+ * target and examines far fewer tiles. job.hw comes from the route_quality
+ * setting: 8 = fast, 7 = balanced, 6 = closer to the cheapest route. */
 function PathRail_H(job, k)
 {
-  return 7 * GSMap.DistanceManhattan(K_Tile(k), job.wp >= 0 ? job.wp : job.goal_tile);
+  return job.hw * GSMap.DistanceManhattan(K_Tile(k), job.wp >= 0 ? job.wp : job.goal_tile);
 }
 
 /* Build actions for one track. first/last are the station front tiles
@@ -183,13 +206,34 @@ function PathRail_Actions(path, first, last, specials, pieces)
   }
 }
 
-/* One-way path signals every `spacing` tiles. forward = trains run along the path. */
+/* Can a signal go on path tile j? Plain track only (straight or one curve
+ * piece, so diagonal stretches get signals too): no bridge or tunnel heads,
+ * no level or diamond crossings. */
+function PathRail_SignalOk(t, k, j)
+{
+  if (k[j] != 0 || k[j + 1] != 0 || k[j - 1] != 0) return false;
+  if (GSMap.DistanceManhattan(t[j - 1], t[j]) != 1 || GSMap.DistanceManhattan(t[j], t[j + 1]) != 1) return false;
+  if (GSRoad.IsRoadTile(t[j]) || GSRail.IsRailTile(t[j])) return false;   // crossings (checked before building)
+  return true;
+}
+
+/* One-way path signals about every `spacing` tiles. forward = trains run
+ * along the path. A tile that cannot hold a signal moves it further on. */
 function PathRail_Signals(path, spacing, forward, out)
 {
   local t = path.tiles, k = path.kinds;
-  for (local j = 2; j + 2 < t.len(); j += spacing) {
-    if (k[j] != 0 || k[j + 1] != 0 || k[j - 1] != 0) continue;
+  local j = 2;
+  while (j + 2 < t.len()) {
+    if (!PathRail_SignalOk(t, k, j)) { j++; continue; }
     local front = forward ? t[j + 1] : t[j - 1];
-    out.append({ op = "signal", t = t[j], f = front });
+    out.append({ op = "signal", t = t[j], f = front, kind = "oneway" });
+    j += spacing;
   }
+}
+
+/* Entry signal for double track: one-way on the incoming row, facing the
+ * switches, so arriving trains reserve a free platform before the switches. */
+function PathRail_StationSignals(sp, in_row, out)
+{
+  out.append({ op = "signal", t = sp.G[in_row], f = sp.F[in_row], kind = "oneway" });
 }

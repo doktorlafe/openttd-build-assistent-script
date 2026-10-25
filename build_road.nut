@@ -106,7 +106,10 @@ function BuildRoad_FindTruckSpot(e, role, cargo, other, blocked)
       local back = U_Step(s, (i + 2) % 4);
       local back_ok = back >= 0 && !blocked.rawin(back) && GSTile.IsBuildable(back) && U_IsFlat(back);
       local tm = GSTestMode();
-      if (!GSRoad.BuildDriveThroughRoadStation(s, f, GSRoad.ROADVEHTYPE_TRUCK, GSStation.STATION_NEW)) continue;
+      if (!GSRoad.BuildDriveThroughRoadStation(s, f, GSRoad.ROADVEHTYPE_TRUCK, GSStation.STATION_NEW)) {
+        U_NoCash();
+        continue;
+      }
       return { s = s, f = f, e = back_ok ? back : -1 };
     }
   }
