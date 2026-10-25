@@ -3,18 +3,26 @@
 **Tired of laying every piece of track by hand?** Pick two towns, press a button, and the script plans the route,
 shows you the price, builds it and buys the vehicles. Everything is controlled from one page in the Story Book.
 
-**Quick start:**
-1. In the main menu open **Game Script Settings**, choose **Lafe Build Assistant** and start a game.
-2. Open the **Story Book** and go to the **Build assistant** page.
-3. Choose **Road** or **Rail**, click **Pick end A** and **Pick end B** on two towns, then **Plan route**.
-4. Check the preview on the map and press **Confirm build**. Done: the line is built and vehicles are ru
+
+
+![OpenTTD](https://img.shields.io/badge/OpenTTD-server%20online-brightgreen?style=for-the-badge)
+![Game Script](https://img.shields.io/badge/Game%20Script-aktivní-blue?style=for-the-badge)
 
 > [!TIP]
 > 🚂 **This script runs on my OpenTTD public server!**
 >
 > Připoj se: **Multiplayer →  `OpenTTD 16 Beta`**
 > or connect via IP addresss `62.238.53.187:3979`
-> Please connect with newest test version of the new 16th update 
+> Please connect with newest test version of the new 16th update
+
+
+**Quick start:**
+1. In the main menu open **Game Script Settings**, choose **Lafe Build Assistant** and start a game.
+2. Open the **Story Book** and go to the **Build assistant** page.
+3. Choose **Road** or **Rail**, click **Pick end A** and **Pick end B** on two towns, then **Plan route**.
+4. Check the preview on the map and press **Confirm build**. Done: the line is built and vehicles are running
+
+
 
 See the pictures below for the basics. The detailed manual follows after them.
 
