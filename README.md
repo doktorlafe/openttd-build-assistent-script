@@ -18,6 +18,8 @@ vehicles for them. It is controlled entirely from the **Story Book**, where each
 > Only one Game Script can run in a game, so this script cannot run together with HardEconomy.
 
 ---
+<img width="802" height="597" alt="image" src="https://github.com/user-attachments/assets/88ac1bbd-603d-42e5-9315-df961da1b190" />
+
 
 ## 1. Installation and startup
 
