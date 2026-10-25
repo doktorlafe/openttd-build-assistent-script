@@ -3,17 +3,25 @@
 **Tired of laying every piece of track by hand?** Pick two towns, press a button, and the script plans the route,
 shows you the price, builds it and buys the vehicles. Everything is controlled from one page in the Story Book.
 
+<div align="center">
 
+![LIVE](https://img.shields.io/badge/🔴%20LIVE-SERVER%20ONLINE-red?style=for-the-badge)
+![OpenTTD](https://img.shields.io/badge/OpenTTD-16%20Beta-orange?style=for-the-badge)
+![Game Script](https://img.shields.io/badge/Game%20Script-ACTIVE-brightgreen?style=for-the-badge)
 
-![OpenTTD](https://img.shields.io/badge/OpenTTD-server%20online-brightgreen?style=for-the-badge)
-![Game Script](https://img.shields.io/badge/Game%20Script-aktivní-blue?style=for-the-badge)
+</div>
 
-> [!TIP]
-> 🚂 **This script runs on my OpenTTD public server!**
+> [!CAUTION]
+> # 🚂 PLAY IT LIVE NOW!
+> ### This script runs on my **public OpenTTD server!**
 >
-> Připoj se: **Multiplayer →  `OpenTTD 16 Beta`**
-> or connect via IP addresss `62.238.53.187:3979`
-> Please connect with newest test version of the new 16th update
+> | | |
+> |---|---|
+> | 🎮 **Server name** | `OpenTTD 16 Beta` |
+> | 🌐 **IP address** | `62.238.53.187:3979` |
+> | ⚠️ **Required version** | **Latest OpenTTD 16 test build** |
+>
+> 👉 **Multiplayer → search `OpenTTD 16 Beta` → JOIN!**
 
 
 **Quick start:**
