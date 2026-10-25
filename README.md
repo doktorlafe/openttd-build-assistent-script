@@ -18,7 +18,16 @@ vehicles for them. It is controlled entirely from the **Story Book**, where each
 > Only one Game Script can run in a game, so this script cannot run together with HardEconomy.
 
 ---
+Defining connection A - B
 <img width="802" height="597" alt="image" src="https://github.com/user-attachments/assets/88ac1bbd-603d-42e5-9315-df961da1b190" />
+Shows a plan
+<img width="2162" height="910" alt="image" src="https://github.com/user-attachments/assets/24339df8-fd27-4e53-9e45-52aff42f4032" />
+After build
+<img width="2322" height="918" alt="image" src="https://github.com/user-attachments/assets/96e95685-f25a-4c7e-a123-a01ec0c6e380" />
+Also creates a vehicle to run (optional)
+<img width="1412" height="898" alt="image" src="https://github.com/user-attachments/assets/3a1a3c9b-217b-4ce1-bcf4-d8db9a96c6f0" />
+Want to grow your city quickly? Just click on the city to create bus stations and also a bus is created.
+<img width="2341" height="878" alt="image" src="https://github.com/user-attachments/assets/f2c07044-fd02-48af-9226-7297e7897657" />
 
 
 ## 1. Installation and startup
