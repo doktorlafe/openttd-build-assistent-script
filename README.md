@@ -1,5 +1,16 @@
 # Lafe Build Assistant – Game Script for OpenTTD
 
+**Tired of laying every piece of track by hand?** Pick two towns, press a button, and the script plans the route,
+shows you the price, builds it and buys the vehicles. Everything is controlled from one page in the Story Book.
+
+**Quick start:**
+1. In the main menu open **Game Script Settings**, choose **Lafe Build Assistant** and start a game.
+2. Open the **Story Book** and go to the **Build assistant** page.
+3. Choose **Road** or **Rail**, click **Pick end A** and **Pick end B** on two towns, then **Plan route**.
+4. Check the preview on the map and press **Confirm build**. Done: the line is built and vehicles are running.
+
+See the pictures below for the basics. The detailed manual follows after them.
+
 A Game Script for **OpenTTD 15.x** (API 15) that builds transport connections for your company and buys
 vehicles for them. It is controlled entirely from the **Story Book**, where each company has its own page.
 
