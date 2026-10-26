@@ -2,13 +2,34 @@
  * self = the controller: self.pages[company] = { page, el = { name -> element id }, ver } */
 
 /* Bump when the page layout changes: older pages are then built again. */
-const UI_VERSION = 8;
+const UI_VERSION = 11;
 
 /* Lines kept in the "Log" part of the page. */
 const UI_LOG_LINES = 6;
 
 /* Lines of the technical log on the debug page. */
 const UI_DBG_LINES = 20;
+
+/* Help page: what every button does (the Story Book has no tooltips). */
+function UI_HelpLines()
+{
+  return [
+    "What the buttons do (the Story Book has no tooltips, so they are explained here).",
+    "A / B: click on the map. Within 4 tiles of an industry = that industry, otherwise the nearest town. These are the two ends.",
+    "Plan: finds station places and the route, shows it with signs and the price. Nothing is built yet.",
+    "Build: builds the planned route and buys vehicles (see the script settings). Shown as READY TO BUILD when the plan is done.",
+    "Cancel: stops planning or building (built parts stay). With nothing running it clears A, B and the list.",
+    "Resume: continues a build that stopped because the money ran out.",
+    "Road / Rail / Double: what to build. Double = two tracks side by side with signals, several trains.",
+    "My tracks: on = the new railway may run on your existing tracks and join them with switches. Off = always all new.",
+    "Transfer: on = if one of your trains already carries the cargo of A to B, only a short feeder to its nearest station is built; the cargo is dropped there and goes on with that train. Also lets you reach a B beyond the distance limit.",
+    "+ List: adds one town (or industry) to a list of up to 10. A list wins over A/B and is built as one line A > B > C ...",
+    "List from signs: place signs on towns with the sign tool (click, Enter, click ...), then press this. The signs become the list in that order and are removed.",
+    "Clear: empties the list.",
+    "Bus loop in a town: click a town, it gets bus stops close together, a depot and a bus.",
+    "Log: reasons of problems, [!] = problem (no money, no station place, no route ...). Debug page: technical details."
+  ];
+}
 
 /* Elements of the debug page (a second page of the Story Book). */
 function UI_DebugItems()
@@ -45,6 +66,8 @@ function UI_Items()
     ["mode_road", GSStoryPage.SPET_BUTTON_PUSH, push, "Road"],
     ["mode_rail", GSStoryPage.SPET_BUTTON_PUSH, push, "Rail"],
     ["mode_double", GSStoryPage.SPET_BUTTON_PUSH, push, "Double"],
+    ["reuse", GSStoryPage.SPET_BUTTON_PUSH, push, "My tracks: use / don't use"],
+    ["transfer", GSStoryPage.SPET_BUTTON_PUSH, push, "Transfer: use / don't use"],
     ["list_add", GSStoryPage.SPET_BUTTON_TILE, pick2, "+ List"],
     ["list_signs", GSStoryPage.SPET_BUTTON_PUSH, push, "List from signs"],
     ["list_clear", GSStoryPage.SPET_BUTTON_PUSH, stop, "Clear"],
@@ -56,8 +79,7 @@ function UI_Items()
   items.append(["hist_title", GSStoryPage.SPET_TEXT, 0, "--- Last builds ---"]);
   for (local i = 0; i < 5; i++) items.append(["h" + i, GSStoryPage.SPET_TEXT, 0, "-"]);
   items.append(["intro", GSStoryPage.SPET_TEXT, 0,
-    "Help: A and B (town, or click near an industry) or a list of towns > Plan > Build. Type: Road / Rail / Double. " +
-    "Many towns fast: place signs on them with the sign tool, then press List from signs."]);
+    "Help: A and B > Plan > Build. What every button does: page Build assistant - help."]);
   return items;
 }
 
@@ -71,6 +93,7 @@ function UI_Ensure(self, company)
       GSStoryPage.Remove(p.page);
     }
     if (p.rawin("dpage") && GSStoryPage.IsValidStoryPage(p.dpage)) GSStoryPage.Remove(p.dpage);
+    if (p.rawin("hpage") && GSStoryPage.IsValidStoryPage(p.hpage)) GSStoryPage.Remove(p.hpage);
     self.pages.rawdelete(company);
   }
   local page = GSStoryPage.New(company, "Build assistant");
@@ -93,6 +116,11 @@ function UI_Ensure(self, company)
       local id = GSStoryPage.NewElement(dpage, it[1], it[2], U_Clip(it[3]));
       if (id != GSStoryPage.STORY_PAGE_ELEMENT_INVALID) p.el.rawset(it[0], id);
     }
+  }
+  local hpage = GSStoryPage.New(company, "Build assistant - help");
+  if (hpage != GSStoryPage.STORY_PAGE_INVALID) {
+    p.hpage <- hpage;
+    foreach (line in UI_HelpLines()) GSStoryPage.NewElement(hpage, GSStoryPage.SPET_TEXT, 0, U_Clip(line));
   }
   UI_DbgSettings(self, company);
   if (self.dlogs.rawin(company)) {
@@ -164,6 +192,8 @@ function UI_Pick(self, company)
   if (!self.picks.rawin(company)) self.picks.rawset(company, { mode = MODE_ROAD, a = null, b = null, list = [] });
   local p = self.picks.rawget(company);
   if (!p.rawin("list")) p.list <- [];   // picks from older saves
+  if (!p.rawin("reuse")) p.reuse <- false;
+  if (!p.rawin("transfer")) p.transfer <- false;
   return p;
 }
 
@@ -173,13 +203,17 @@ function UI_Selection(self, company)
   local text;
   if (p.list.len() > 0) {
     // the list wins over A/B
-    text = "Selection: " + Job_ModeName(p.mode) + " | list of " + p.list.len() + ": ";
+    text = "Selection: " + Job_ModeName(p.mode) + (p.mode != MODE_ROAD && p.reuse ? " (uses your tracks)" : "") +
+         (p.mode != MODE_ROAD && p.transfer ? " (transfer on)" : "") +
+           " | list of " + p.list.len() + ": ";
     for (local i = 0; i < p.list.len(); i++) text += (i > 0 ? " > " : "") + Tg_Name(p.list[i]);
     if (p.list.len() < 2) text += " (add at least one more)";
     UI_SetText(self, company, "sel", text);
     return;
   }
-  text = "Selection: " + Job_ModeName(p.mode) + " | A: " + Tg_Name(p.a) + " | B: " + Tg_Name(p.b);
+  text = "Selection: " + Job_ModeName(p.mode) + (p.mode != MODE_ROAD && p.reuse ? " (uses your tracks)" : "") +
+         (p.mode != MODE_ROAD && p.transfer ? " (transfer on)" : "") +
+         " | A: " + Tg_Name(p.a) + " | B: " + Tg_Name(p.b);
   if (p.a != null && p.b != null && Tg_Valid(p.a) && Tg_Valid(p.b)) {
     local link = Tg_Link(p.a, p.b);
     if (link == null) text += " | no cargo between them";
@@ -242,6 +276,11 @@ function UI_DbgJob(self, job)
     if (job.rawin("boost")) t += " | boost x" + job.boost;
     if (job.rawin("retries")) t += " | retries " + job.retries;
     t += " | heuristic " + Job_HW(job);
+    if (job.rawin("reuse") && job.reuse && job.rawin("rs")) {
+      local rs = job.rs;
+      t += " | My tracks: tiles " + rs.tiles + ", along " + rs.along + ", switches " + rs.join +
+           ", refused one-way " + rs.oneway + " / test " + rs.refused;
+    }
   } else if (job.state == "BUILD" || job.state == "PAUSED") {
     t += " | action " + job.idx + "/" + job.actions.len() + " | failed " + job.failed + " | bank " + GSCompany.GetBankBalance(job.company);
   }

@@ -95,10 +95,11 @@ function Veh_Train(depot, rail, cargo, plat_len)
 }
 
 /* Orders: stops in the given order, full load at the first one if asked. */
-function Veh_Orders(v, stops, full_first)
+function Veh_Orders(v, stops, full_first, per_stop)
 {
   for (local i = 0; i < stops.len(); i++) {
     local flags = (i == 0 && full_first) ? GSOrder.OF_FULL_LOAD_ANY : GSOrder.OF_NONE;
+    if (per_stop != null && i < per_stop.len()) flags = per_stop[i];
     if (!GSOrder.AppendOrder(v, stops[i], flags)) {
       U_Log("w", "Order to " + stops[i] + " failed: " + GSError.GetLastErrorString());
       return false;
@@ -127,7 +128,7 @@ function Veh_Buy(a, depot)
     if (!GSVehicle.IsValidVehicle(first)) why = GSError.GetLastErrorString();
   }
   if (!GSVehicle.IsValidVehicle(first)) return " Vehicles: could not buy (" + why + ").";
-  if (!Veh_Orders(first, a.stops, a.full)) {
+  if (!Veh_Orders(first, a.stops, a.full, a.rawin("flags") ? a.flags : null)) {
     GSVehicle.SellVehicle(first);
     return " Vehicles: orders failed.";
   }

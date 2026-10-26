@@ -3,6 +3,7 @@ class LafeBuildAssistant extends GSInfo {
   function GetName()        { return "Lafe Build Assistant"; }
   function GetDescription() { return "Builds roads and railways for your company between towns and industries: bridges, tunnels, stations, depots, signals and vehicles. Control it from the Story Book."; }
   function GetVersion()     { return 3; }
+  function MinVersionToLoad() { return 1; }   // older savegames (and the benchmark map) load with newer versions
   function GetDate()        { return "2026-10-25"; }
   function CreateInstance() { return "LafeBuildAssistant"; }
   function GetShortName()   { return "LBAS"; }
@@ -29,7 +30,7 @@ class LafeBuildAssistant extends GSInfo {
     Num("build_per_tick", "Building: pieces built per step", 20, 1, 200);
     Flag("allow_bridges", "Allow bridges", 1);
     Flag("allow_tunnels", "Allow tunnels", 1);
-    Num("max_bridge_length", "Maximum bridge length (tiles)", 20, 2, 100);
+    Num("max_bridge_length", "Maximum bridge length (tiles)", 60, 2, 100);
     Num("max_tunnel_length", "Maximum tunnel length (tiles)", 20, 2, 100);
     Flag("build_stops", "Road between towns: build a bus stop in both towns", 1);
     Flag("build_depot", "Build a depot", 1);
@@ -38,15 +39,18 @@ class LafeBuildAssistant extends GSInfo {
     Num("veh_loop", "Vehicles: buses bought for a town bus loop (0 = none)", 1, 0, 10);
     Num("loop_stops", "Town bus loop: number of bus stops", 5, 2, 8);
     Num("loop_gap", "Town bus loop: minimum distance between the stops (tiles)", 4, 2, 10);
-    Flag("allow_terraform", "Rail stations: level sloped land when there is no flat place", 1);
+    Flag("allow_terraform", "Landscaping: level land for stations, curves on slopes and steep slopes on the route", 1);
     Num("rail_station_length", "Rail station length (tiles)", 4, 2, 10);
-    Num("rail_platforms", "Rail station platforms on single track (1-2)", 2, 1, 2);
+    Num("rail_platforms", "Double rail station platforms (big station: later lines join the free platforms; single track uses at most 2)", 4, 2, 8);
+    Flag("loop_station", "Double rail: loop at the destination (trains run through the station and turn back onto the return track, no reversing); a normal end station where there is no room", 1);
+    Flag("follow_lines", "Rail: new lines run alongside your existing tracks where they can (tidy corridors)", 1);
     Flag("rail_mail", "Rail between towns: trains also carry mail (mail wagon behind the engine)", 1);
     Flag("station_signals", "Rail: path signals at the station entries (lets 2 trains share a single track)", 1);
     Num("signal_spacing", "Double rail: signal every N tiles", 5, 2, 20);
     Flag("preview_signs", "Show the planned route with signs", 1);
     Flag("search_preview", "Show the route search live on the map with moving signs", 1);
     Num("route_quality", "Route search: 0 = fastest, 1 = balanced, 2 = straightest/cheapest (slower)", 1, 0, 2);
+    Flag("benchmark", "Benchmark: on loading, plan a fixed set of test routes (nothing is built) and report the results", 0);
     Flag("auto_confirm", "Build right away without asking for confirmation", 0);
     Num("cost_limit_percent", "One build may cost at most this % of the bank balance", 100, 1, 100);
   }

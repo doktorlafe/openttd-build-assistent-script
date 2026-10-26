@@ -12,6 +12,7 @@ require("advice.nut");
 require("loop.nut");
 require("vehicles.nut");
 require("ui.nut");
+require("bench.nut");
 
 class LafeBuildAssistant extends GSController {
   pages = null;   // company -> { page, el }
@@ -23,6 +24,9 @@ class LafeBuildAssistant extends GSController {
   titles = null;  // company -> current page title
   queue = null;   // company -> legs still to build from a town list
   chains = null;  // company -> { list, spots, depot } of the town list being built
+  bigst = null;   // company -> [stations built by the script, for later lines to join]
+  bench = null;   // benchmark run (setting "benchmark"), not saved
+  bench_wait = false;   // benchmark waits for the first company
   turn = 0;       // round robin over the companies
 
   constructor() {
@@ -35,6 +39,7 @@ class LafeBuildAssistant extends GSController {
     this.titles = {};
     this.queue = {};
     this.chains = {};
+    this.bigst = {};
   }
 
   function Start();
@@ -54,7 +59,7 @@ function LafeBuildAssistant::Save()
     local d = Job_SaveData(job);
     if (d != null) jobs.rawset(c, d);
   }
-  return { pages = this.pages, picks = this.picks, hist = this.hist, logs = this.logs, jobs = jobs, queue = this.queue, chains = this.chains };
+  return { pages = this.pages, picks = this.picks, hist = this.hist, logs = this.logs, jobs = jobs, queue = this.queue, chains = this.chains, bigst = this.bigst };
 }
 
 function LafeBuildAssistant::Load(version, data)
@@ -65,6 +70,7 @@ function LafeBuildAssistant::Load(version, data)
   if (data.rawin("logs")) this.logs = data.rawget("logs");
   if (data.rawin("queue")) this.queue = data.rawget("queue");
   if (data.rawin("chains")) this.chains = data.rawget("chains");
+  if (data.rawin("bigst")) this.bigst = data.rawget("bigst");
   if (data.rawin("jobs")) {
     foreach (c, d in data.rawget("jobs")) this.jobs.rawset(c, Job_LoadData(d));
   }
@@ -79,6 +85,7 @@ function LafeBuildAssistant::Start()
     local c = GSCompany.ResolveCompanyID(i);
     if (c != GSCompany.COMPANY_INVALID) UI_Ensure(this, c);
   }
+  if (GSController.GetSetting("benchmark")) Bench_Start(this);
 
   while (true) {
     while (GSEventController.IsEventWaiting()) {
@@ -119,6 +126,7 @@ function LafeBuildAssistant::RunJobs()
     legs.remove(0);
     local job = Job_New(c, leg.mode, leg.a, leg.b);
     job.auto <- true;
+    job.reuse <- leg.rawin("reuse") && leg.reuse;
     if (leg.rawin("k") && this.chains.rawin(c)) {
       job.chain <- this.chains.rawget(c);
       job.chain_k <- leg.k;
@@ -127,6 +135,7 @@ function LafeBuildAssistant::RunJobs()
     this.jobs.rawset(c, job);
     UI_Status(this, c, "Town list: planning " + job.names + " ...");
   }
+  if (this.bench != null) Bench_Tick(this);
   local active = [];
   foreach (c, job in this.jobs) if (Job_IsActive(job)) active.append(c);
   if (active.len() == 0) return false;
@@ -155,6 +164,7 @@ function LafeBuildAssistant::HandleEvent(ev)
   local type = ev.GetEventType();
   if (type == GSEvent.ET_COMPANY_NEW) {
     UI_Ensure(this, GSEventCompanyNew.Convert(ev).GetCompanyID());
+    if (this.bench_wait) Bench_Start(this);
   } else if (type == GSEvent.ET_COMPANY_BANKRUPT) {
     local c = GSEventCompanyBankrupt.Convert(ev).GetCompanyID();
     if (this.jobs.rawin(c)) this.jobs.rawdelete(c);
@@ -276,7 +286,7 @@ function LafeBuildAssistant::PlanList(company, p)
       UI_Diag(this, company, "!", "List refused: " + Tg_Name(a) + " - " + Tg_Name(b) + " is " + dist + " tiles (limit " + max_dist + ", setting max_distance).");
       return;
     }
-    legs.append({ mode = p.mode, a = { kind = a.kind, id = a.id }, b = { kind = b.kind, id = b.id }, n = i + 1, total = list.len() - 1 });
+    legs.append({ mode = p.mode, reuse = p.reuse, a = { kind = a.kind, id = a.id }, b = { kind = b.kind, id = b.id }, n = i + 1, total = list.len() - 1 });
   }
   // a list of towns becomes one line: shared through stations, vehicles run A..Z
   local towns = true;
@@ -302,6 +312,18 @@ function LafeBuildAssistant::OnButton(company, name)
   if (name == "mode_road" || name == "mode_rail" || name == "mode_double") {
     p.mode = name == "mode_road" ? MODE_ROAD : (name == "mode_rail" ? MODE_RAIL : MODE_DOUBLE);
     UI_Selection(this, company);
+  } else if (name == "transfer") {
+    p.transfer = !p.transfer;
+    UI_Selection(this, company);
+    UI_Status(this, company, p.transfer
+      ? "Transfer: ON. If your trains already carry the cargo to B, only a feeder to their nearest station is built."
+      : "Transfer: OFF. Railways go all the way from A to B.");
+  } else if (name == "reuse") {
+    p.reuse = !p.reuse;
+    UI_Selection(this, company);
+    UI_Status(this, company, p.reuse
+      ? "My tracks: ON. New railways may run on your existing tracks and join them with switches and signals."
+      : "My tracks: OFF. New railways are built completely new, next to your old ones.");
   } else if (name == "list_signs") {
     this.ListFromSigns(company, p);
   } else if (name == "list_clear") {
@@ -327,8 +349,39 @@ function LafeBuildAssistant::OnButton(company, name)
     }
     local dist = GSMap.DistanceManhattan(Tg_Center(p.a), Tg_Center(p.b));
     local max_dist = GSController.GetSetting("max_distance");
+    // Transfer: a short feeder to the nearest station your trains carry the cargo from
+    local hub = null;
+    if (p.transfer && p.mode != MODE_ROAD) {
+      local cm = GSCompanyMode(company);
+      hub = Tg_FindHub(p.a, p.b, max_dist);
+      if (hub == null) {
+        local hi = ::g_hubinfo;
+        local why = hi == null ? "" : " Checked: " + hi.carry + " train(s) can carry a cargo of " + Tg_Name(p.a) + ", " +
+          hi.to_b + " of them go to a station near " + Tg_Name(p.b) + " that accepts it, " + hi.hubs +
+          " station(s) where they load, none within " + max_dist + " tiles of " + Tg_Name(p.a) + ".";
+        UI_Diag(this, company, "!", "Transfer: no station to feed." + why + " Planning the whole way instead.");
+      }
+    }
+    if (hub != null) {
+      local h = { kind = "station", id = hub.hub };
+      local nj = Job_New(company, p.mode, { kind = p.a.kind, id = p.a.id }, h);
+      nj.reuse <- p.reuse;
+      nj.forced_link <- { from = nj.a, to = h, cargo = hub.cargo, pax = hub.pax };
+      nj.transfer_to <- { kind = p.b.kind, id = p.b.id };
+      nj.transfer_name <- Tg_Name(p.b);
+      nj.names = Tg_Name(p.a) + " - " + Tg_Name(h) + " (transfer to " + Tg_Name(p.b) + ")";
+      this.jobs.rawset(company, nj);
+      UI_Diag(this, company, "i", "Transfer: " + GSCargo.GetName(hub.cargo) + " of " + Tg_Name(p.a) + " goes to your station " +
+              Tg_Name(h) + " (" + GSMap.DistanceManhattan(Tg_Center(p.a), Tg_Center(h)) + " tiles instead of " + dist + "), " +
+              hub.trains + " of your train(s) take it on to " + Tg_Name(p.b) + ".");
+      if (hub.trains < 2) UI_Diag(this, company, "!", "Transfer: only " + hub.trains + " train loads at " + Tg_Name(h) +
+              ". If the cargo piles up there, add trains to that line, waiting cargo slowly disappears.");
+      UI_Status(this, company, "Planning " + nj.names + " ...");
+      return;
+    }
     if (dist > max_dist) {
-      UI_Status(this, company, "The ends are " + dist + " tiles apart, the limit is " + max_dist + ".");
+      UI_Status(this, company, "The ends are " + dist + " tiles apart, the limit is " + max_dist + "." +
+        (p.mode != MODE_ROAD && !p.transfer ? " Tip: switch Transfer on to feed one of your lines that already goes there." : ""));
       UI_Diag(this, company, "!", "Plan refused: ends " + dist + " tiles apart (limit " + max_dist + ", setting max_distance).");
       return;
     }
@@ -337,7 +390,9 @@ function LafeBuildAssistant::OnButton(company, name)
               ". Planning goes on, but station places, bridges and tunnels need money even to be tested. " + U_MoneyText(company) + ".");
     }
     U_Log("i", "[" + company + "] new job, mode " + p.mode);
-    this.jobs.rawset(company, Job_New(company, p.mode, { kind = p.a.kind, id = p.a.id }, { kind = p.b.kind, id = p.b.id }));
+    local nj = Job_New(company, p.mode, { kind = p.a.kind, id = p.a.id }, { kind = p.b.kind, id = p.b.id });
+    nj.reuse <- p.reuse;
+    this.jobs.rawset(company, nj);
     UI_Status(this, company, "Planning " + Job_ModeName(p.mode) + " " + Tg_Name(p.a) + " - " + Tg_Name(p.b) + " ...");
   } else if (name == "confirm") {
     if (job == null || job.state != "CONFIRM") {

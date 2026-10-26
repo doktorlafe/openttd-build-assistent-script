@@ -136,7 +136,17 @@ function BuildRail_Check(e, role, cargo, sp, blocked, radius, level)
     local back = (sp.d + 2) % 4;
     if (!BuildRail_ExitOk(U_Step(sp.Gb[0], back), back, blocked)) return false;
   }
-  if (!Tg_SpotOk(e, role, cargo, sp.anchor, sp.w, sp.h, radius)) return false;
+  if (e.kind == "station") {
+    // transfer hub: the new platforms must become part of that station,
+    // beside it or (Ctrl trick) within the station spread
+    local ok = sp.rawin("join") && sp.join == e.id;
+    if (!ok) {
+      local spread = U_DistantJoinSpread();
+      ok = spread > 0 && GSMap.DistanceMax(sp.anchor, GSStation.GetLocation(e.id)) + max(sp.w, sp.h) <= spread;
+    }
+    if (!ok) return false;
+    sp.join_sid <- e.id;
+  } else if (!Tg_SpotOk(e, role, cargo, sp.anchor, sp.w, sp.h, radius)) return false;
   local tm = GSTestMode();
   local fits = GSRail.BuildRailStation(sp.anchor, sp.axis, sp.plat, sp.len, GSStation.STATION_JOIN_ADJACENT);
   if (!fits) U_NoCash();
@@ -197,6 +207,9 @@ function BuildRail_ExtendLayouts(e, other, plat, len, through)
         local sp = BuildRail_Layout(GSMap.GetTileIndex(ex, ey), d, plat, len, through);
         if (sp == null) continue;
         sp.join <- st;
+        // the new row next to the old station, and the direction to the old one
+        sp.ra <- side > 0 ? 0 : plat - 1;
+        sp.old_dir <- along_x ? (side > 0 ? 3 : 1) : (side > 0 ? 2 : 0);
         if (U_Toward(d, sp.anchor, other) >= 0) out.append(sp); else later.append(sp);
       }
     }
@@ -209,10 +222,15 @@ function BuildRail_ExtendLayouts(e, other, plat, len, through)
  * 1. right beside an own station (extends it),
  * 2. free land nearby as it is,
  * 3. (if allowed) sloped land that gets levelled first. */
-function BuildRail_FindSpot(e, role, cargo, other, plat, len, blocked, through)
+/* mode: null = flat land first, then levelled land; false = flat land only;
+ * true = levelled land only (fewer places, each test is expensive).
+ * quiet = no "no place" line in the Log (the caller reports). */
+function BuildRail_FindSpot(e, role, cargo, other, plat, len, blocked, through, mode, quiet)
 {
   local radius = GSStation.GetCoverageRadius(GSStation.STATION_TRAIN);
-  local passes = GSController.GetSetting("allow_terraform") ? [false, true] : [false];
+  local terra = GSController.GetSetting("allow_terraform") != 0;
+  local passes = mode == null ? (terra ? [false, true] : [false]) : (mode && !terra ? [] : [mode]);
+  if (passes.len() == 0) return null;
 
   foreach (level in passes) {
     foreach (sp in BuildRail_ExtendLayouts(e, other, plat, len, through)) {
@@ -227,8 +245,9 @@ function BuildRail_FindSpot(e, role, cargo, other, plat, len, blocked, through)
   local total = passes.len() * min(cands.len(), 2000), done = 0;
   foreach (level in passes) {
     local tried = 0;
+    local cap = level ? 500 : 2000;   // a levelling test is expensive
     foreach (e0 in cands) {
-      if (++tried > 2000) break;
+      if (++tried > cap) break;
       if (++done % 40 == 0) U_Report(done * 100 / max(1, total));
       if (blocked.rawin(e0) || !GSTile.IsBuildable(e0)) continue;
       foreach (d in U_DirsToward(e0, other)) {
@@ -241,8 +260,38 @@ function BuildRail_FindSpot(e, role, cargo, other, plat, len, blocked, through)
       }
     }
   }
-  U_Diag("!", "No free " + len + "x" + plat + " station place at " + Tg_Name(e) + " (" + cands.len() + " tiles checked" + (passes.len() < 2 ? ", land levelling is off" : "") + ").");
+  if (!quiet) U_Diag("!", "No free " + len + "x" + plat + " station place at " + Tg_Name(e) + " (" + cands.len() + " tiles checked" + (terra ? "" : ", land levelling is off") + ").");
   return null;
+}
+
+/* One big station: when new platforms are added beside an own station, the
+ * switch tiles of the neighbouring rows are linked both ways. Trains of every
+ * line can then use every platform, enter through one station throat and
+ * leave straight on their own line. Old line pieces are only added when the
+ * old row really has a line in front of it. */
+function BuildRail_JoinCrossover(sp, dbl, out)
+{
+  if (!sp.rawin("join") || !sp.rawin("old_dir")) return 0;
+  local ra = sp.ra, od = sp.old_dir;
+  local pb = sp.P[ra], fb = sp.F[ra], gb = sp.G[ra];
+  local pa = U_Step(pb, od), fa = U_Step(fb, od), ga = U_Step(gb, od);
+  if (pa < 0 || fa < 0 || ga < 0) return 0;
+  if (!GSRail.IsRailStationTile(pa) || GSStation.GetStationID(pa) != sp.join) return 0;
+  local n = 0;
+  // old platforms -> new line, only if this new row has its own exit
+  // (single track: only row 0 leads out)
+  if (dbl || ra == 0) {
+    out.append({ op = "rail", p = pa, t = fa, n = fb });
+    out.append({ op = "rail", p = fa, t = fb, n = gb });
+    n++;
+  }
+  // new platforms -> old line, only if there is an old line in front of that row
+  if (GSRail.IsRailTile(ga)) {
+    out.append({ op = "rail", p = pb, t = fb, n = fa });
+    out.append({ op = "rail", p = fb, t = fa, n = ga });
+    n++;
+  }
+  return n;
 }
 
 /* Switch tracks on the F tiles. double = both rows lead out to the line. */
@@ -264,6 +313,145 @@ function BuildRail_FanActions(sp, double, out)
   out.append({ op = "rail", p = sp.P[1], t = sp.F[1], n = sp.G[1] });
   out.append({ op = "rail", p = sp.P[0], t = sp.F[0], n = sp.F[1] });
   out.append({ op = "rail", p = sp.F[0], t = sp.F[1], n = sp.G[1] });
+}
+
+/* Big station, rows 2 and up: a track along the switch tiles (the F column)
+ * leads every platform to the exits of rows 0 (and 1 on double track).
+ * The G tiles of these rows stay free for lines that join later. */
+function BuildRail_FanMore(sp, double, out)
+{
+  if (sp.plat <= 2) return;
+  for (local r = 2; r < sp.plat; r++) {
+    out.append({ op = "rail", p = sp.P[r], t = sp.F[r], n = sp.F[r - 1] });
+    if (r + 1 < sp.plat) out.append({ op = "rail", p = sp.F[r + 1], t = sp.F[r], n = sp.F[r - 1] });
+  }
+  out.append({ op = "rail", p = sp.F[2], t = sp.F[1], n = sp.F[0] });
+  if (double) out.append({ op = "rail", p = sp.F[2], t = sp.F[1], n = sp.G[1] });
+}
+
+/* Loop station, rows 2 and up at the back end: a track along the back switch
+ * tiles (the Fb column) leads every platform to the exit of row 0. */
+function BuildRail_FanBackMore(sp, out)
+{
+  if (sp.plat <= 2 || !sp.rawin("Fb")) return;
+  for (local r = 2; r < sp.plat; r++) {
+    out.append({ op = "rail", p = sp.Pb[r], t = sp.Fb[r], n = sp.Fb[r - 1] });
+    if (r + 1 < sp.plat) out.append({ op = "rail", p = sp.Fb[r + 1], t = sp.Fb[r], n = sp.Fb[r - 1] });
+  }
+  out.append({ op = "rail", p = sp.Fb[2], t = sp.Fb[1], n = sp.Fb[0] });
+}
+
+/* Station place with plat platforms, or fewer (down to min_plat) when the big
+ * one does not fit anywhere. */
+function BuildRail_FindSpotAny(e, role, cargo, other, plat, min_plat, len, blocked, through)
+{
+  // cheap first: flat land for the big and the small size, only then levelled land
+  local sizes = plat > min_plat ? [plat, min_plat] : [plat];
+  foreach (mode in [false, true]) {
+    foreach (p in sizes) {
+      local sp = BuildRail_FindSpot(e, role, cargo, other, p, len, blocked, through, mode, true);
+      if (sp == null) continue;
+      if (p < plat) U_Diag("i", "Station at " + Tg_Name(e) + ": only " + p + " platform(s) fit instead of " + plat + ".");
+      return sp;
+    }
+  }
+  U_Diag("!", "No free " + len + "x" + plat + " station place at " + Tg_Name(e) + " (not even " + min_plat + " platform(s)" +
+         (GSController.GetSetting("allow_terraform") ? "" : ", land levelling is off") + ").");
+  return null;
+}
+
+/* A station the script built before, near endpoint e, that still has free
+ * platform rows (rows without a line in front). Returns a spot that uses
+ * nrows of them (1 single, 2 double track) or null. The new line then joins
+ * this station instead of building another one. */
+function BuildRail_UseStation(list, e, role, cargo, nrows, rail, me, blocked)
+{
+  if (list == null) return null;
+  local center = Tg_Center(e);
+  local radius = GSStation.GetCoverageRadius(GSStation.STATION_TRAIN);
+  foreach (st in list) {
+    local p0 = st.P[0];
+    if (!GSRail.IsRailStationTile(p0) || GSTile.GetOwner(p0) != me) continue;
+    if (GSMap.DistanceManhattan(st.anchor, center) > 30) continue;
+    local rt = GSRail.GetRailType(p0);
+    if (!GSRail.TrainCanRunOnRail(rail, rt) || !GSRail.TrainHasPowerOnRail(rail, rt)) continue;
+    // does not cover the endpoint: the Ctrl trick (one joined tile near it) may help
+    local helper = -1;
+    if (!Tg_SpotOk(e, role, cargo, st.anchor, st.w, st.h, radius)) {
+      helper = BuildRail_HelperTile(e, role, cargo, st, GSStation.GetStationID(p0), radius, U_DistantJoinSpread(), blocked);
+      if (helper < 0) continue;
+    }
+    local free = {};
+    for (local r = 1; r < st.plat; r++) {
+      local g = st.G[r];
+      if (!GSRail.IsRailStationTile(st.P[r])) continue;
+      if (blocked.rawin(g) || GSRail.IsRailTile(g) || !GSTile.IsBuildable(g)) continue;
+      if (!BuildRail_ExitOk(U_Step(g, st.d), st.d, blocked)) continue;
+      free.rawset(r, true);
+    }
+    local first = -1;
+    for (local r = 1; r < st.plat && first < 0; r++) {
+      if (nrows == 1 && free.rawin(r)) first = r;
+      if (nrows == 2 && free.rawin(r) && free.rawin(r + 1)) first = r;
+    }
+    if (first < 0) continue;
+    local v = { d = st.d, s = st.s, plat = nrows, len = st.len, P = [], F = [], G = [], tiles = [],
+                anchor = st.anchor, w = st.w, h = st.h, level = false, existing = true, links = [] };
+    for (local r = first; r < first + nrows; r++) {
+      v.P.append(st.P[r]);
+      v.F.append(st.F[r]);
+      v.G.append(st.G[r]);
+      v.tiles.append(st.F[r]);
+      v.tiles.append(st.G[r]);
+    }
+    // the switch column of the station leads into the new exit, so trains of
+    // this line can use the other platforms too
+    v.links.append({ op = "rail", p = st.F[first - 1], t = st.F[first], n = st.G[first] });
+    v.station_name <- GSStation.GetName(GSStation.GetStationID(p0));
+    if (helper >= 0) {
+      v.helper <- helper;
+      v.sid <- GSStation.GetStationID(p0);
+      v.tiles.append(helper);
+    }
+    v.rows <- first.tostring() + (nrows == 2 ? "+" + (first + 1) : "");
+    return v;
+  }
+  return null;
+}
+
+/* The Ctrl trick: one station tile next to endpoint e, joined to the station
+ * st (distant join), so e delivers to / takes from that station although the
+ * station itself is too far away. Returns the tile or -1. */
+function BuildRail_HelperTile(e, role, cargo, st, sid, radius, spread, blocked)
+{
+  if (spread <= 0) return -1;
+  local x0 = GSMap.GetTileX(st.anchor), y0 = GSMap.GetTileY(st.anchor);
+  local x1 = x0 + st.w - 1, y1 = y0 + st.h - 1;
+  local cands = Tg_Candidates(e, role, radius, st.anchor);
+  if (e.kind == "industry") {
+    // closest to the station first, the spread is the limit
+    cands.Valuate(GSMap.DistanceManhattan, st.anchor);
+    cands.Sort(GSList.SORT_BY_VALUE, GSList.SORT_ASCENDING);
+  }
+  local tried = 0;
+  for (local t = cands.Begin(); !cands.IsEnd() && tried < 400; t = cands.Next()) {
+    tried++;
+    if (blocked.rawin(t) || !GSTile.IsBuildable(t) || !U_IsFlat(t)) continue;
+    local x = GSMap.GetTileX(t), y = GSMap.GetTileY(t);
+    if (max(x1, x) - min(x0, x) + 1 > spread || max(y1, y) - min(y0, y) + 1 > spread) continue;
+    if (!Tg_SpotOk(e, role, cargo, t, 1, 1, radius)) continue;
+    local tm = GSTestMode();
+    if (!GSRail.BuildRailStation(t, GSRail.RAILTRACK_NE_SW, 1, 1, sid)) { U_NoCash(); continue; }
+    return t;
+  }
+  return -1;
+}
+
+/* What to remember of a station for later lines (saved with the game). */
+function BuildRail_Memo(sp)
+{
+  return { anchor = sp.anchor, d = sp.d, s = sp.s, plat = sp.plat, len = sp.len,
+           P = clone sp.P, F = clone sp.F, G = clone sp.G, w = sp.w, h = sp.h };
 }
 
 /* Depot beside a straight piece of track. tiles = part of the line in order.

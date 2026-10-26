@@ -88,7 +88,7 @@ Page elements from top to bottom:
 | Selection | *Selection* line | type, ends or list, which cargo will be carried and from where |
 | State | *Progress* and *Status* lines | what is happening now, progress in percent, `>>> READY TO BUILD <<<` when the plan is done |
 | | **Resume** | continue after running out of money |
-| Build type | **Road**, **Rail**, **Double** | what will be built |
+| Build type | **Road**, **Rail**, **Double**, **My tracks** | what will be built; *My tracks* switches reuse of your existing railway on/off (chapter 3) |
 | List | **+ List**, **List from signs**, **Clear** | several towns in a row (chapter 4) |
 | Log | 6 lines, newest first | diagnostics: `[!]` = problem (no money, no station place, search limit, failed pieces, ...), `[i]` = info |
 | Bus loop | **Bus loop in a town** + result | chapter 6 |
@@ -96,6 +96,8 @@ Page elements from top to bottom:
 | Help | one line at the bottom | short how-to |
 
 The Story Book can only stack elements below each other, so buttons cannot be put side by side.
+
+A page **Build assistant - help** explains every button (the Story Book has no tooltips).
 
 A second page, **Build assistant - debug**, shows the technical side without opening the script debug window:
 the script settings that matter for the search (including OpenTTD's opcode limit), the inner state of the running job
@@ -132,9 +134,20 @@ A page from a savegame of an older version is rebuilt into the new layout automa
 
 ### Stations: where and how
 A station location is searched in this order:
+0. **Joining a big station of yours:** the script remembers the stations it built. If one near the end still has free platforms
+   (without a line in front), the new line ends there: it gets its own entry and is linked to the switches of the others,
+   so all trains share one big station. Only the switches and the track are built, no new station.
+   If that station does not cover the industry or town, the script uses the **Ctrl trick (distant join)**: one station tile
+   right next to it, joined to the big station. The industry then delivers to (or takes from) the big station. It works
+   as far as the game setting *station spread* allows (the whole station must fit in spread × spread tiles, default 12)
+   and only when *distant join* is on in the game settings.
 1. **Extending your station:** new platforms are placed alongside an existing station, with the same orientation
    and aligned with its end, and connected to it. A 2×7 thus becomes one 4×7 station with shared passengers.
+   The switches of the old and new platforms are linked both ways, so it is **one big station**: trains of every line
+   can use every platform, come in through one throat and leave straight on their own line.
 2. **Flat free land** within 20 tiles of the town centre (or around the industry). The station must cover houses or the industry.
+   At an industry the station goes **as far from it as the coverage allows** (and a bit toward the other end), so the land
+   around the industry stays free.
 3. **A slope that gets levelled** (if *allow_terraform* is on). The levelling cost is included in the estimate.
 
 The station exit must be free and the space for the depot behind the platform is kept free.
@@ -143,10 +156,44 @@ The script does not demolish houses, because that would hurt your town rating.
 ### Route rules
 - **Road:** uses existing roads, goes straight through drive-through stops and also uses existing bridges and tunnels.
   It crosses rail only perpendicularly and only over a single straight track.
-- **Rail:** must not turn on a slope, on a level crossing, or right after a bridge. Two turns in the same direction in a row
+- **Rail, following your lines:** a tile right beside one of your tracks is cheaper (*follow_lines*), so a new line runs
+  alongside your existing ones, copies their line and takes the same way around hills, water and towns: tidy corridors
+  instead of new tracks across open land.
+- **Rail, slopes:** a curve on a slope is built on a foundation where possible, otherwise the tile is levelled (*allow_terraform*).
+  Steep slopes are levelled too, or avoided when landscaping is off.
+- **Rail:** crossing roads or tracks is possible on the level, but a **bridge over them** (flyover) is always considered too
+  and usually wins over crossing your own track on the level. Must not turn on a slope, on a level crossing, or right after a bridge. Two turns in the same direction in a row
   (a 90° turn) are forbidden. Diagonal stretches are cheap, a sharp bend (straight, one curve piece, straight) is expensive, so bends are smooth where there is room. It may cross your own straight unsignalled track perpendicularly. It does not cross other companies' tracks, but can bridge over them.
 - **Long routes** are searched in parts: a waypoint is placed every *segment_length* tiles on the straight line between the ends
   and the route is searched part by part. A waypoint in water or in a town is moved to free land, and an unreachable waypoint is skipped.
+
+### My tracks: using your existing railway
+Press **My tracks** to switch it on (the *Selection* line then says *uses your tracks*). The route search may then run
+on your existing tracks and join them where it helps, instead of building a new line next to them:
+- only **your company's** tracks are used (players in the same company share them); other companies' tracks stay obstacles,
+- the rail type must suit the new trains, stations, depots, bridges and tunnels of the old line are not used,
+- it never runs against a one-way signal, so on a double track it keeps to the right track,
+- where a switch is needed on the old line it is added, and the new track gets a signal before the junction,
+- running on your track is much cheaper for the search than new track, so it takes a small detour to use it.
+  Lines to the same place (for example several mines to one power station) then share one corridor:
+  less land taken, less money spent, and more room left for the other players,
+- the plan summary says on how many tiles new track is built and how much was saved.
+
+The old line is shared by more trains then, so check that it has enough signals. Off by default.
+
+### Transfer: feed a line you already have
+Press **Transfer** to switch it on (the *Selection* line says *transfer on*). When you then plan A → B, the script looks at
+your trains: if one of them already carries a cargo of A (passengers for a town) to a station that accepts it at B, the
+script builds only a short **feeder** from A to the station of that line nearest to A (the *hub*, within *max_distance*
+of A; it is used even when B itself is closer):
+- the new platforms become part of the hub station (beside it, or with the Ctrl trick within the *station spread*),
+- the feeder trains load at A (full load for cargo) and at the hub **transfer and leave empty**,
+- your trains already running from the hub take the cargo on to B and the money is paid on delivery,
+- B may then be further away than *max_distance*, only the feeder has to fit the limit,
+- the Log says how many of your trains load at the hub; with fewer than 2 it warns you, because waiting cargo slowly
+  disappears when it is not picked up often enough.
+
+If no such train exists, the script says so and plans the whole way to B. Built for games without cargodist (the default).
 
 ### When no route is found
 If the search ran out of its limit, the script first tries once more with twice the limit. Then it discards the station locations, finds others and tries again, up to 3 attempts in total.
@@ -234,7 +281,7 @@ They can be changed while the game is running and apply to all companies. In mul
 | Long routes: search in parts of N tiles (`segment_length`) | 40 | 0–200 | Waypoint spacing for long routes. 0 = search the whole route at once (very slow for long routes). |
 | Allow bridges (`allow_bridges`) | yes | | Bridges over water, roads and rails. |
 | Allow tunnels (`allow_tunnels`) | yes | | Tunnels through hills. |
-| Maximum bridge length (`max_bridge_length`) | 20 | 2–100 | Longest bridge in tiles. |
+| Maximum bridge length (`max_bridge_length`) | 60 | 2–100 | Longest bridge in tiles. The game also has its own limit (*max bridge length*, default 64). |
 | Maximum tunnel length (`max_tunnel_length`) | 20 | 2–100 | Longest tunnel in tiles. |
 | Route search quality (`route_quality`) | 1 | 0–2 | 0 = fastest search, 1 = balanced, 2 = straighter and cheaper routes but a slower search. Level 2 can be many times slower on long routes. The search also avoids level crossings where it can. |
 
@@ -249,9 +296,11 @@ They can be changed while the game is running and apply to all companies. In mul
 ### Railway
 | Setting | Default | Range | What it does |
 |---|---|---|---|
-| Rail stations: level sloped land… (`allow_terraform`) | yes | | Level a slope when no flat land is found. |
+| Landscaping (`allow_terraform`) | yes | | Level land: under stations when no flat place is found, for curves on slopes where a foundation does not fit, and on steep slopes of the route (track cannot lie on them). The levelling is in the cost estimate. |
 | Rail station length (`rail_station_length`) | 4 | 2–10 | Platform length in tiles; determines train length. |
-| Rail station platforms on single track (`rail_platforms`) | 2 | 1–2 | Platforms for single track. Double track always has 2. |
+| Double rail: loop station (`loop_station`) | on | | The destination gets a through station: trains enter at the front, use any platform, leave at the back and the return track turns around the station and runs right beside the incoming track (one-way traffic, no reversing). The source gets a small 2-platform station. Where there is no room, a normal end station is built. |
+| Double rail station platforms (`rail_platforms`) | 4 | 2–8 | Big stations for double track: rows 0 and 1 get the line, the other platforms are linked to them and wait for later lines to join. Single track uses at most 2 platforms (enough for two trains to pass). If the big station fits nowhere, a smaller one is built. Through stations of a town list have 2. |
+| New lines alongside your tracks (`follow_lines`) | yes | | Running right beside your existing tracks is cheaper for the route search, so lines form tidy corridors. |
 | Trains between towns also carry mail (`rail_mail`) | yes | | Passenger trains get mail wagons right behind the engine (1 per 4 platform tiles, at least 1); the rest are passenger wagons. |
 | Path signals at station entries (`station_signals`) | yes | | Double track: one-way signal before each station. Single track with 2 platforms: two-way signals, so 2 trains can pass in the stations. |
 | Double rail: signal every N tiles (`signal_spacing`) | 5 | 2–20 | Signal spacing on double track (also on diagonal stretches; crossings and bridge heads are skipped). |
@@ -275,6 +324,20 @@ They can be changed while the game is running and apply to all companies. In mul
 | Show the route search live (`search_preview`) | yes | While searching, *search* signs follow the path that got closest to the goal so far and move as the search goes on (every ~15 000 tiles examined); *search >* marks the tip. You can watch where it tries and where it gets stuck. All players see them; they disappear when the search ends. |
 | Show the planned route with signs (`preview_signs`) | yes | Route preview signs. All players can see them; they disappear after confirming or cancelling. |
 | Build right away without asking (`auto_confirm`) | no | Build immediately after planning without the Build button. A town list is always built without confirmation. |
+
+---
+
+## Benchmark (comparing script versions)
+
+1. Make one test map: generate a game with a fixed *random seed* (World generation window), save it, e.g. `benchmark.sav`.
+2. Switch on the setting **benchmark** and load that savegame.
+3. The script plans a fixed set of test routes one after another and **builds nothing**, so the map stays the same:
+   the 6 biggest towns each to their nearest town 20+ tiles away (the first one as double rail) and the first 4 industries
+   (by id) to the nearest industry that accepts their cargo. On the same map it is always the same set.
+4. For every route: found or not, ticks, tiles examined, retries, length, bridges, tunnels and cost. The summary
+   (`Benchmark done: 9/10 routes found, … ticks, …k tiles examined`) goes to the Log and the history, failures to the Log,
+   all lines to the debug page and the script debug window (lines starting with `BENCH`, easy to copy).
+5. Load the same savegame with another version or other settings and compare the numbers.
 
 ---
 
@@ -314,7 +377,8 @@ reason are in the **Log**, all of them in the script debug window (AI/Game Scrip
 
 ## 10. Limitations
 
-- **No post-build check yet:** when a piece of track fails to build, the script only reports it as "piece(s) failed" and doesn't fix it.
+- **Check after building:** every planned track piece is checked; missing ones are built again. What still cannot be built
+  is reported in the Log with its tile (X,Y) and the news message points there.
 - Single track carries at most 2 trains (they pass in the stations). A town list on single track runs 1 train.
 - The locomotive is chosen by speed, not by train weight. A weak locomotive with heavy cargo will be slow.
 - Each line is a separate route; the script can't branch into an existing network.
@@ -341,6 +405,7 @@ reason are in the **Log**, all of them in the script debug window (AI/Game Scrip
 | `build_rail.nut` | station layout (terminal and through), location search, station extension, switches, depot |
 | `actions.nut` | build steps: execution, cost estimate in test mode |
 | `vehicles.nut` | vehicle purchase, train composition, orders |
+| `bench.nut` | benchmark mode: fixed test routes, results |
 | `advice.nut` | locomotive and wagon choice for bought trains |
 | `loop.nut` | town bus loop |
 | `preview.nut` | preview signs |

@@ -25,7 +25,9 @@ function Act_Run(job, a)
   if (op == "rail") return GSRail.BuildRail(a.p, a.t, a.n) || GSError.GetLastError() == GSError.ERR_ALREADY_BUILT;
   if (op == "rail_bridge") return a.id >= 0 && GSBridge.BuildBridge(GSVehicle.VT_RAIL, a.id, a.a, a.b);
   if (op == "rail_tunnel") return GSTunnel.BuildTunnel(GSVehicle.VT_RAIL, a.a);
-  if (op == "rail_station") return GSRail.BuildRailStation(a.tile, a.axis, a.plat, a.len, GSStation.STATION_JOIN_ADJACENT);
+  if (op == "rail_station_join") return GSRail.BuildRailStation(a.tile, GSRail.RAILTRACK_NE_SW, 1, 1, a.station);
+  if (op == "rail_station") return GSRail.BuildRailStation(a.tile, a.axis, a.plat, a.len,
+                                     (a.rawin("station") && a.station >= 0) ? a.station : GSStation.STATION_JOIN_ADJACENT);
   if (op == "level") return GSTile.LevelTiles(a.a, a.b) || GSError.GetLastError() == GSError.ERR_ALREADY_BUILT;
   if (op == "rail_depot_end") {
     // behind the station, in line with platform 0; if that tile is taken, beside the line
