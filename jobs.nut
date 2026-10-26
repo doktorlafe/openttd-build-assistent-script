@@ -42,6 +42,9 @@ function Job_SearchSetup(job)
   job.goal_tile <- -1;
   job.goal_dir <- 4;
   job.hw <- [8, 7, 6][GSController.GetSetting("route_quality")];
+  if (!job.rawin("reuse")) job.reuse <- false;
+  job.terra <- GSController.GetSetting("allow_terraform") != 0;
+  job.follow <- GSController.GetSetting("follow_lines") != 0;
   if (!job.rawin("boost")) job.boost <- 1;
   Job_ResetCache(job);
 }
@@ -53,6 +56,13 @@ function Job_ResetCache(job)
   job.xc <- {};
   job.bc <- {};
   job.tc <- {};
+  job.sc <- {};   // curves on slopes
+  job.lc <- {};   // can this tile be levelled
+  job.uc <- {};   // may run on this own track tile (My tracks)
+  job.rc <- {};   // existing track piece checks (My tracks)
+  // My tracks counters for the debug page: usable tiles seen, moves along the
+  // old track, possible switches, refused by a one-way signal / by the test build
+  job.rs <- { tiles = 0, along = 0, join = 0, oneway = 0, refused = 0, last = "" };
 }
 
 /* Long routes are searched in parts: waypoints on the straight line from
@@ -94,8 +104,18 @@ function Job_GoodWaypoint(job, wp, radius)
   return wp;
 }
 
+/* Tiles examined by all searches of this job so far. */
+function Job_Examined(job)
+{
+  local n = job.rawin("exam_sum") ? job.exam_sum : 0;
+  if (job.rawin("astar") && job.astar != null) n += job.astar.examined;
+  return n;
+}
+
 function Job_NewAStar(job, key)
 {
+  // keep the count of the search that is replaced (benchmark, debug)
+  if (job.rawin("astar") && job.astar != null) job.exam_sum <- Job_Examined(job);
   // a part towards a waypoint gives up sooner, so a bad waypoint costs little
   local limit = (job.wp >= 0 ? max(20000, Job_Limit() / 4) : Job_Limit()) * job.boost;
   if (job.mode == MODE_ROAD)
@@ -122,6 +142,7 @@ function Job_SegDone(job)
     foreach (t in p.tiles) {
       job.blocked.rawset(t, true);
       job.cc.rawset(t, -1);
+      job.uc.rawset(t, false);
       job.xc.rawset(t * 2, false);
       job.xc.rawset(t * 2 + 1, false);
     }
@@ -149,6 +170,18 @@ function Job_SegFailed(job)
  * Returns true when a retry was started. */
 function Job_Retry(self, job, why)
 {
+  // My tracks found no way: plan again with all-new track
+  if (job.reuse && job.mode != MODE_ROAD) {
+    local rs = job.rs;
+    UI_Diag(self, job.company, "!", job.names + ": no route along your tracks (" + why + "; own track tiles seen " + rs.tiles +
+            ", switches possible " + rs.join + ", refused: one-way signal " + rs.oneway + ", test build " + rs.refused +
+            (rs.last != "" ? " - " + rs.last : "") + "). Trying again with all-new track.");
+    UI_Status(self, job.company, job.names + ": no route along your tracks, trying again with all-new track ...");
+    job.reuse = false;
+    job.reuse_failed <- true;
+    job.state = "PREP";
+    return true;
+  }
   // the search ran out of room: try once more with a doubled limit
   if (job.astar.examined > job.astar.limit && !job.astar.stalled && job.boost == 1) {
     job.boost = 2;
@@ -163,17 +196,23 @@ function Job_Retry(self, job, why)
     if (job.chain_k > 0) return false;   // stations of the list are built already
     job.chain.plan <- null;              // plan them again, avoiding these places
   }
-  local tiles = [];
+  local tiles = [], which = "both stations";
   if (job.rawin("spA")) {
-    foreach (t in job.spA.tiles) tiles.append(t);
-    foreach (t in job.spB.tiles) tiles.append(t);
+    // change only the station where the search got stuck, keep the other one
+    local a = job.astar;
+    local closest = a.best_h < 0 ? -1 : a.best_h / max(1, Job_HW(job));
+    local at_b = why == "station entry blocked" || (job.wp < 0 && closest >= 0 && closest <= 12);
+    local at_a = !at_b && job.wp_i == 0 && a.examined > 0 && a.Closeness() < 10;
+    if (!at_b) foreach (t in job.spA.tiles) tiles.append(t);
+    if (!at_a) foreach (t in job.spB.tiles) tiles.append(t);
+    which = at_b ? "the station at " + Tg_Name(job.link.to) : (at_a ? "the station at " + Tg_Name(job.link.from) : "both stations");
   } else if (job.rawin("stations")) {
     foreach (a in job.stations) if (a.op == "truck_stop") { tiles.append(a.s); tiles.append(a.f); }
   }
   if (tiles.len() == 0) return false;   // town to town road: nothing to move
   job.retries++;
   foreach (t in tiles) job.avoid.rawset(t, true);
-  UI_Diag(self, job.company, "!", job.names + ": no route (" + why + "), retry " + job.retries + "/2 with other station places.");
+  UI_Diag(self, job.company, "!", job.names + ": no route (" + why + "), retry " + job.retries + "/2: new place for " + which + ".");
   UI_Status(self, job.company, job.names + ": no route from these station places, trying other places (" + (job.retries + 1) + "/3) ...");
   job.state = "PREP";
   return true;
@@ -235,7 +274,7 @@ function Job_Prep(self, job)
 {
   ::g_nocash = 0;
   if (!Tg_Valid(job.a) || !Tg_Valid(job.b)) return "Town or industry no longer exists.";
-  local link = Tg_Link(job.a, job.b);
+  local link = job.rawin("forced_link") ? job.forced_link : Tg_Link(job.a, job.b);
   if (link == null) return "Nothing to carry between " + job.names + ": pick an industry that produces a cargo the other end accepts.";
   job.link <- link;
   job.cargo_name <- GSCargo.GetCargoLabel(link.cargo);
@@ -284,7 +323,14 @@ function Job_Prep(self, job)
     job.rail = BuildRail_SelectType();
     job.me <- GSCompany.ResolveCompanyID(GSCompany.COMPANY_SELF);
     if (job.rail < 0) return "No rail type available yet.";
-    local plat = job.mode == MODE_DOUBLE ? 2 : GSController.GetSetting("rail_platforms");
+    // single track: 2 platforms are enough (trains pass each other there);
+    // big stations only for double track, where several lines meet
+    local plat = GSController.GetSetting("rail_platforms");
+    if (job.mode == MODE_DOUBLE) plat = max(2, plat);
+    else plat = min(plat, 2);
+    local min_plat = job.mode == MODE_DOUBLE ? 2 : 1;
+    local nrows = job.mode == MODE_DOUBLE ? 2 : 1;
+    local memo = self.bigst.rawin(job.company) ? self.bigst.rawget(job.company) : null;
     local len = GSController.GetSetting("rail_station_length");
     job.plat_len = len;
     // town list (chain): all stations are planned first (see Job_PlanChainStations),
@@ -312,31 +358,62 @@ function Job_Prep(self, job)
       UI_Progress(self, job.company, "1/3 station place at " + Tg_Name(link.from), 0);
       U_Log("i", "Rail: type " + job.rail + ", station " + len + "x" + plat + ", looking at " + Tg_Name(link.from));
       ::g_report = { self = self, company = job.company, label = "1/3 station place at " + Tg_Name(link.from), base = 0 };
-      sa = BuildRail_FindSpot(link.from, "from", link.cargo, c_to, plat, len, job.blocked, false);
+      sa = BuildRail_UseStation(memo, link.from, "from", link.cargo, nrows, job.rail, job.me, job.blocked);
+      // with a loop at B the source only needs a small 2-platform station
+      local plat_a = (job.mode == MODE_DOUBLE && link.to.kind != "station" && !job.rawin("transfer_to") &&
+                      GSController.GetSetting("loop_station") != 0) ? min_plat : plat;
+      if (sa == null) sa = BuildRail_FindSpotAny(link.from, "from", link.cargo, c_to, plat_a, min_plat, len, job.blocked, false);
       ::g_report = null;
       if (sa == null) return "No place for a " + len + "x" + plat + " station at " + Tg_Name(link.from) + ".";
       foreach (t in sa.tiles) job.blocked.rawset(t, true);
       if (sa.rawin("dep") && sa.dep >= 0) job.blocked.rawset(sa.dep, true);   // keep the depot place free
       UI_Progress(self, job.company, "1/3 station place at " + Tg_Name(link.to), 50);
       ::g_report = { self = self, company = job.company, label = "1/3 station place at " + Tg_Name(link.to), base = 50 };
-      sb = BuildRail_FindSpot(link.to, "to", link.cargo, c_from, plat, len, job.blocked, false);
+      // loop station: a through station at B, the return track starts at its back end
+      job.loop <- job.mode == MODE_DOUBLE && link.to.kind != "station" && !job.rawin("transfer_to") &&
+                  GSController.GetSetting("loop_station") != 0;
+      sb = null;
+      if (job.loop) {
+        sb = BuildRail_FindSpotAny(link.to, "to", link.cargo, c_from, plat, min_plat, len, job.blocked, true);
+        if (sb == null) {
+          job.loop = false;
+          UI_Diag(self, job.company, "i", "No room for a loop station at " + Tg_Name(link.to) + ", a normal end station is used.");
+        }
+      }
+      if (sb == null) sb = BuildRail_UseStation(memo, link.to, "to", link.cargo, nrows, job.rail, job.me, job.blocked);
+      if (sb == null) sb = BuildRail_FindSpotAny(link.to, "to", link.cargo, c_from, link.to.kind == "station" ? min_plat : plat, min_plat, len, job.blocked, false);
       ::g_report = null;
       if (sb == null) return "No place for a " + len + "x" + plat + " station at " + Tg_Name(link.to) + ".";
       foreach (t in sb.tiles) job.blocked.rawset(t, true);
+    }
+    if (ch == null) {
+      // say what was chosen at each end, so the choice is clear in the Log
+      foreach (pair in [[sa, link.from], [sb, link.to]]) {
+        local sp = pair[0], how;
+        if (sp.rawin("existing")) how = "free platform row " + sp.rows + " of your station " + sp.station_name;
+        else if (sp.rawin("join")) how = sp.plat + " new platform(s) beside your station " + GSStation.GetName(sp.join);
+        else if (sp.rawin("join_sid")) how = sp.plat + " new platform(s) joined to " + GSStation.GetName(sp.join_sid);
+        else how = "new station, " + sp.plat + " platform(s)" + (sp.level ? ", land levelled" : "");
+        if (sp == sb && job.rawin("loop") && job.loop) how += ", loop (trains run through and turn back)";
+        UI_Diag(self, job.company, "i", "Station at " + Tg_Name(pair[1]) + ": " + how + ".");
+      }
     }
     job.spA <- sa;
     job.spB <- sb;
     // which platform row at B the first track ends on, so the two tracks do not cross
     local r1 = 0;
-    if (job.mode == MODE_DOUBLE) {
+    if (job.mode == MODE_DOUBLE && !(job.rawin("loop") && job.loop)) {
       local same = U_Cross(sa.d, sa.s) == U_Cross((sb.d + 2) % 4, sb.s);
       r1 = same ? 0 : 1;
     }
     job.r1 <- r1;
+    job.approach <- [];
+    job.lane <- [];
     if (last) {
       job.goal_tile = sb.G[r1];
       job.goal_dir = (sb.d + 2) % 4;
       job.goal_front <- sb.F[r1];
+      if (job.rawin("loop") && job.loop) Job_LoopApproach(job, sb);
     } else {
       // enter the through station at its back end, moving towards its front
       job.goal_tile = sb.Gb[0];
@@ -349,25 +426,77 @@ function Job_Prep(self, job)
   return null;
 }
 
+/* Loop station: the first track ends with a straight run in front of the
+ * station, and the lane beside it (outside row 0) stays free during the first
+ * search. The return track comes around the station and lies in that lane,
+ * so both tracks leave the station side by side (a tight loop). */
+function Job_LoopApproach(job, sb)
+{
+  local want = max(4, sb.plat + 2), run = [];
+  local t = sb.G[0];
+  for (local i = 0; i < want; i++) {
+    t = U_Step(t, sb.d);
+    if (t < 0 || job.blocked.rawin(t) || !GSTile.IsBuildable(t)) break;
+    run.append(t);
+  }
+  if (run.len() < 2) return;
+  // the search ends at the far end of the run, the rest is laid straight
+  job.goal_tile = run[run.len() - 1];
+  for (local i = run.len() - 2; i >= 0; i--) {
+    job.approach.append(run[i]);
+    job.blocked.rawset(run[i], true);
+  }
+  job.approach.append(sb.G[0]);
+  // side of row 0 away from the other platforms
+  if (sb.plat < 2) return;
+  local side = -1;
+  for (local i = 0; i < 4; i++) if (U_Step(sb.G[1], i) == sb.G[0]) side = i;
+  if (side < 0) return;
+  local lane = [U_Step(sb.F[0], side), U_Step(sb.G[0], side)];
+  foreach (x in run) lane.append(U_Step(x, side));
+  // a few tiles past the run too, so the first track cannot turn across the
+  // lane there and shut the return track in
+  local past = run[run.len() - 1];
+  for (local i = 0; i < 3 && past >= 0; i++) {
+    past = U_Step(past, sb.d);
+    if (past >= 0) lane.append(U_Step(past, side));
+  }
+  foreach (x in lane) {
+    if (x < 0 || job.blocked.rawin(x)) continue;
+    job.blocked.rawset(x, true);
+    job.lane.append(x);
+  }
+}
+
 function Job_StartSecondTrack(job)
 {
   local sa = job.spA, sb = job.spB;
   job.near <- {};
   Job_ResetCache(job);
+  // the lane kept free beside the loop approach is for this track
+  if (job.rawin("lane")) foreach (x in job.lane) if (job.blocked.rawin(x)) job.blocked.rawdelete(x);
   foreach (t in job.path1.tiles) {
     job.blocked.rawset(t, true);
     foreach (n in U_Neighbours(t)) job.near.rawset(n, true);
   }
-  job.goal_tile = sb.G[1 - job.r1];
-  job.goal_dir = (sb.d + 2) % 4;
-  Job_BeginSearch(job, K_Make(sa.G[1], sa.d, 0));
+  local loop = job.rawin("loop") && job.loop;
+  if (loop) {
+    // loop: from the back end of B around the station and back to A
+    job.goal_tile = sa.G[1];
+    job.goal_dir = (sa.d + 2) % 4;
+    Job_BeginSearch(job, K_Make(sb.Gb[0], (sb.d + 2) % 4, 0));
+  } else {
+    job.goal_tile = sb.G[1 - job.r1];
+    job.goal_dir = (sb.d + 2) % 4;
+    Job_BeginSearch(job, K_Make(sa.G[1], sa.d, 0));
+  }
   // the waypoints of the second track lie on the first track (not on the
   // straight line between the towns), so it follows the first one closely
   local p1 = job.path1.tiles;
   if (job.wps.len() > 0 && p1.len() > 2) {
     local n = job.wps.len() + 1;
     job.wps = [];
-    for (local s = 1; s < n; s++) job.wps.append(p1[s * p1.len() / n]);
+    for (local s = 1; s < n; s++) job.wps.append(p1[loop ? p1.len() - 1 - s * p1.len() / n : s * p1.len() / n]);
     job.wp_i = 0;
     job.wp = job.wps[0];
     Job_NewAStar(job, job.seg_start);
@@ -387,19 +516,46 @@ function Job_Plan(self, job)
     if (GSController.GetSetting("build_depot")) extra.append({ op = "road_depot", center = job.depot_center });
   } else {
     local sa = job.spA, sb = job.spB, dbl = job.mode == MODE_DOUBLE;
+    local loop = dbl && job.rawin("loop") && job.loop;
+    // second track ends: normally A row 1 <- B row (1 - r1); loop: B back end -> A row 1
+    local p2a = loop ? sb.Fb[0] : sa.F[1], p2b = loop ? sa.F[1] : sb.F[1 - job.r1];
     // stations: both ends, or for a town list every station at once in leg 0
     local build = [];
     if (job.build_all) foreach (sp in job.chain.plan) build.append(sp);
     else if (!job.rawin("chain")) build = [sa, sb];
     foreach (sp in build) {
+      if (sp.rawin("existing")) {
+        // a free row of an own station: only the switches and the link to its switch column
+        BuildRail_FanActions(sp, dbl, pieces);
+        foreach (a in sp.links) pieces.append(a);
+        if (sp.rawin("helper")) {
+          acts.append({ op = "rail_station_join", tile = sp.helper, station = sp.sid, critical = true });
+          UI_Diag(self, job.company, "i", "Ctrl trick: one tile of " + sp.station_name + " is built next to the " +
+                  (sp == job.spA ? Tg_Name(job.link.from) : Tg_Name(job.link.to)) + ", joined to the station (distant join).");
+        }
+        continue;
+      }
       if (sp.level) acts.append({ op = "level", a = sp.la, b = sp.lb, critical = true });
-      acts.append({ op = "rail_station", tile = sp.anchor, axis = sp.axis, plat = sp.plat, len = sp.len, critical = true });
-      BuildRail_FanActions(sp, dbl, pieces);
+      acts.append({ op = "rail_station", tile = sp.anchor, axis = sp.axis, plat = sp.plat, len = sp.len, critical = true,
+                    station = sp.rawin("join_sid") ? sp.join_sid : -1 });
+      local lp = loop && sp == sb;   // loop station: all platforms from one entry to one exit
+      BuildRail_FanActions(sp, dbl && !lp, pieces);
+      BuildRail_FanMore(sp, dbl && !lp, pieces);
+      if (lp) BuildRail_FanBackMore(sp, pieces);
+      local x = BuildRail_JoinCrossover(sp, dbl, pieces);
+      if (x > 0) UI_Diag(self, job.company, "i", "Station " + GSStation.GetName(sp.join) + " gets " + sp.plat +
+                         " more platform(s), linked " + (x == 2 ? "both ways" : "one way") + " with the old ones: one big station.");
     }
+    // landscaping first, then bridges/tunnels, then the track
+    local levels = [];
+    local nl = PathRail_LevelActions(job.path1, sa.F[0], job.goal_front, levels);
+    if (dbl) nl += PathRail_LevelActions(job.path2, p2a, p2b, levels);
+    if (nl > 0) UI_Diag(self, job.company, "i", job.names + ": " + nl + " tile(s) of the route will be levelled (landscaping).");
+    foreach (a in levels) acts.append(a);
     PathRail_Actions(job.path1, sa.F[0], job.goal_front, specials, pieces);
     if (dbl) {
       paths.append(job.path2);
-      PathRail_Actions(job.path2, sa.F[1], sb.F[1 - job.r1], specials, pieces);
+      PathRail_Actions(job.path2, p2a, p2b, specials, pieces);
     }
     if (GSController.GetSetting("build_depot")) {
       local t = job.path1.tiles, slice = [];
@@ -412,14 +568,19 @@ function Job_Plan(self, job)
     if (dbl) {
       local sp = GSController.GetSetting("signal_spacing");
       PathRail_Signals(job.path1, sp, true, extra);
-      PathRail_Signals(job.path2, sp, false, extra);
+      PathRail_Signals(job.path2, sp, loop, extra);
+    }
+    if (job.reuse) {
+      // protect the junctions with the existing tracks
+      PathRail_JoinSignals(job.path1, job.me, dbl, true, extra);
+      if (dbl) PathRail_JoinSignals(job.path2, job.me, true, loop, extra);
     }
     if (GSController.GetSetting("station_signals")) {
       // station entries: path signals so trains wait for a free platform / free line
       if (dbl) {
         PathRail_StationSignals(sa, 1, extra);        // track 2 arrives at A on row 1
         PathRail_StationSignals(sb, job.r1, extra);    // track 1 arrives at B on row r1
-      } else if (sa.plat >= 2) {
+      } else if (sa.plat >= 2 || sa.rawin("existing") || sb.rawin("existing")) {
         // only the ends this leg connects (a through station's other end may have no track yet)
         extra.append({ op = "signal", t = sa.G[0], f = sa.F[0], kind = "twoway" });
         if (job.goal_tile == sb.G[0]) extra.append({ op = "signal", t = sb.G[0], f = sb.F[0], kind = "twoway" });
@@ -446,8 +607,22 @@ function Job_Plan(self, job)
   }
   local summary = Job_ModeName(job.mode) + " " + job.names + " (" + job.cargo_name + "): " + tiles + " tiles, " +
     bridges + " bridge(s), " + tunnels + " tunnel(s), cost about " + job.cost;
+  if (job.rawin("loop") && job.loop) summary += ", loop station at " + Tg_Name(job.link.to);
+  if (job.rawin("reuse_failed")) summary += " (My tracks found no way, all-new track)";
+  if (job.mode != MODE_ROAD && job.reuse) {
+    local used = 0, all = 0;
+    foreach (p in paths) foreach (t in p.tiles) { all++; if (PathRail_IsExisting(t, job.me)) used++; }
+    summary += ", new track only on " + (all - used) + " tile(s), " + used + " on your existing tracks (" + (used * 100 / max(1, all)) + "% saved)";
+  }
   job.summary <- summary;
   job.news_tile <- job.mode == MODE_ROAD ? Tg_Center(job.link.from) : job.spA.anchor;
+  if (job.rawin("bench")) {
+    // benchmark: record and stop, nothing is built
+    Bench_Record(self, job, true, tiles + " tiles, " + bridges + " bridge(s), " + tunnels + " tunnel(s), cost about " + job.cost);
+    job.astar = null;
+    Job_Drop(self, job);
+    return;
+  }
   // free the search memory, it is not needed any more
   job.astar = null;
   job.blocked = {};
@@ -507,7 +682,7 @@ function Job_PlanChainStations(self, job, ch, plat, len)
     local label = "1/3 stations " + (i + 1) + "/" + n + ": " + Tg_Name(e);
     UI_Progress(self, job.company, label, i * 100 / n);
     ::g_report = { self = self, company = job.company, label = label, base = i * 100 / n };
-    local sp = BuildRail_FindSpot(e, i == 0 ? "from" : "to", job.cargo, other, plat, len, blocked, through);
+    local sp = BuildRail_FindSpot(e, i == 0 ? "from" : "to", job.cargo, other, min(plat, 2), len, blocked, through, null, false);
     ::g_report = null;
     if (sp == null) return "No place for a " + len + "x" + plat + (through ? " through" : "") + " station at " + Tg_Name(e) + ". The list was not started.";
     foreach (t in sp.tiles) blocked.rawset(t, true);
@@ -555,9 +730,14 @@ function Job_VehicleAction(job)
   local stops = [];
   foreach (p in points) stops.append(p);
   for (local i = points.len() - 2; i >= 1; i--) stops.append(points[i]);
-  return { op = "vehicles", kind = road ? "road" : "rail", stops = stops, resolve = resolve,
-           cargo = job.cargo, full = !job.link.pax, count = count,
-           depot = ch != null ? ch.depot : -1, rail = job.rail, plat_len = job.plat_len };
+  local a = { op = "vehicles", kind = road ? "road" : "rail", stops = stops, resolve = resolve,
+              cargo = job.cargo, full = !job.link.pax, count = count,
+              depot = ch != null ? ch.depot : -1, rail = job.rail, plat_len = job.plat_len };
+  if (job.rawin("transfer_to")) {
+    // feeder: load at the source, at the hub transfer and leave empty
+    a.flags <- [job.link.pax ? GSOrder.OF_NONE : GSOrder.OF_FULL_LOAD_ANY, GSOrder.OF_TRANSFER | GSOrder.OF_NO_LOAD];
+  }
+  return a;
 }
 
 function Job_Confirm(self, job)
@@ -588,6 +768,7 @@ function Job_Drop(self, job)
 
 function Job_Fail(self, job, text)
 {
+  if (job.rawin("bench")) Bench_Record(self, job, false, text);
   if (::g_nocash > 0) {
     text = "NOT ENOUGH MONEY (" + U_MoneyText(job.company) + "). " + ::g_nocash +
            " test build(s) failed for lack of money, so this may be the real reason: " + text;
@@ -600,6 +781,35 @@ function Job_Fail(self, job, text)
   Job_Drop(self, job);
 }
 
+/* Check after building: every track piece of the plan must really connect
+ * its neighbours. A missing one (a hole in the track, a switch that was not
+ * built at a station) is built again; what still fails is reported. */
+function Job_Verify(self, job)
+{
+  if (job.mode == MODE_ROAD) return;
+  local missing = 0, fixed = 0, where = -1;
+  foreach (a in job.actions) {
+    if (a.op != "rail") continue;
+    if (GSRail.AreTilesConnected(a.p, a.t, a.n)) continue;
+    missing++;
+    if (GSRail.BuildRail(a.p, a.t, a.n) && GSRail.AreTilesConnected(a.p, a.t, a.n)) fixed++;
+    else if (where < 0) where = a.t;
+  }
+  if (missing == 0) {
+    U_Log("i", job.names + ": check after building: all track pieces connected.");
+    return;
+  }
+  job.failed = max(0, job.failed - fixed);
+  if (missing == fixed) {
+    UI_Diag(self, job.company, "i", job.names + ": check after building: " + missing + " missing track piece(s) found and built.");
+  } else {
+    UI_Diag(self, job.company, "!", job.names + ": check after building: " + (missing - fixed) + " track piece(s) still missing (" +
+            GSError.GetLastErrorString() + "), first at tile " + GSMap.GetTileX(where) + "," + GSMap.GetTileY(where) +
+            ". Trains may not reach every platform there.");
+    job.news_tile = where;   // the news message points at the hole
+  }
+}
+
 function Job_Finish(self, job)
 {
   local text = Job_ModeName(job.mode) + " " + job.names + " built";
@@ -607,7 +817,18 @@ function Job_Finish(self, job)
   if (job.rawin("chain")) {
     // remember the stations and depot for the next legs of the town list
     if (job.chain.depot < 0) job.chain.depot = job.depot_tile;
+  } else if (job.mode != MODE_ROAD && job.rawin("spA") && job.rawin("spB")) {
+    // big stations: later lines may join their free platforms
+    if (!self.bigst.rawin(job.company)) self.bigst.rawset(job.company, []);
+    local memo = self.bigst.rawget(job.company);
+    foreach (sp in [job.spA, job.spB]) {
+      if (sp.rawin("existing") || sp.plat < 2) continue;
+      if (sp == job.spB && job.rawin("loop") && job.loop) continue;   // every row of a loop station is used
+      memo.append(BuildRail_Memo(sp));
+    }
+    while (memo.len() > 60) memo.remove(0);
   }
+  if (job.rawin("transfer_to")) text += ". Transfer: the cargo goes on to " + job.transfer_name + " with your trains from the hub";
   if (job.veh_text != "") text += "." + job.veh_text;
   else if (job.rawin("chain") && job.chain_k + 2 < job.chain.list.len()) text += ". The next leg follows.";
   else text += ". Now buy the vehicles.";
@@ -684,6 +905,12 @@ function Job_Step(self, job)
     }
     if (r < 0) {
       if (Job_SegFailed(job)) return;   // waypoint skipped, trying again
+      if (job.state == "SEARCH2" && job.rawin("loop") && job.loop) {
+        job.loop = false;
+        UI_Diag(self, job.company, "i", job.names + ": no room for the loop at " + Tg_Name(job.link.to) + " (" + Job_Why(job) + "), the return track starts at the station front instead.");
+        Job_StartSecondTrack(job);
+        return;
+      }
       local why = Job_Why(job);
       if (Job_Retry(self, job, why)) return;
       Job_Fail(self, job, "No route found (" + why + ", " + job.astar.examined + " tiles examined). Try other ends, allow longer bridges or raise search_limit.");
@@ -692,6 +919,11 @@ function Job_Step(self, job)
     if (!Job_SegDone(job)) return;      // next part of the route
     if (job.state == "SEARCH") {
       job.path1 <- job.acc;
+      // loop station: the straight approach in front of it
+      if (job.rawin("approach")) foreach (x in job.approach) {
+        job.path1.tiles.append(x);
+        job.path1.kinds.append(0);
+      }
       if (job.mode == MODE_DOUBLE) {
         Job_StartSecondTrack(job);
         return;
@@ -733,6 +965,7 @@ function Job_Step(self, job)
       job.idx++;
     }
     if (job.idx >= job.actions.len()) {
+      Job_Verify(self, job);
       Job_Finish(self, job);
     } else if (job.ticks % 2 == 0) {
       UI_Progress(self, job.company, "3/3 building", job.idx * 100 / job.actions.len());

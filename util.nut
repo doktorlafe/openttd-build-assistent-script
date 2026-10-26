@@ -72,6 +72,26 @@ function U_IsFlat(t)
   return GSTile.GetSlope(t) == GSTile.SLOPE_FLAT;
 }
 
+function U_IsSteep(t)
+{
+  return GSTile.IsSteepSlope(GSTile.GetSlope(t));
+}
+
+/* The tile one step down-right, so LevelTiles(t, U_Corner(t)) levels exactly t. */
+function U_Corner(t)
+{
+  return GSMap.GetTileIndex(GSMap.GetTileX(t) + 1, GSMap.GetTileY(t) + 1);
+}
+
+/* Can tile t be levelled (test mode)? */
+function U_CanLevel(t)
+{
+  local tm = GSTestMode();
+  if (GSTile.LevelTiles(t, U_Corner(t))) return true;
+  U_NoCash();
+  return false;
+}
+
 function U_IsInclined(t)
 {
   local s = GSTile.GetSlope(t);
@@ -137,6 +157,9 @@ function U_Report(pct)
  * RunJobs sets g_ctx = { self, company } around each job step. */
 g_ctx <- null;
 
+/* What the last transfer hub search checked (see Tg_FindHub). */
+g_hubinfo <- null;
+
 function U_Diag(level, text)
 {
   if (g_ctx == null) { GSLog.Info(U_Clip(text)); return; }
@@ -172,6 +195,19 @@ function U_MoneyText(company)
   local bank = GSCompany.GetBankBalance(company);
   local more = GSCompany.GetMaxLoanAmount() - GSCompany.GetLoanAmount();
   return "bank " + bank + (more > 0 ? ", you can still borrow " + more + " (Finances window)" : ", loan is at maximum");
+}
+
+/* Distant join (the Ctrl trick when building a station): a new station part
+ * may join a station it does not touch, as long as the whole station fits
+ * in station_spread x station_spread tiles. Returns the spread, or 0 when the
+ * game does not allow distant joins. */
+function U_DistantJoinSpread()
+{
+  try {
+    if (GSGameSettings.IsValid("station.distant_join_stations") && GSGameSettings.GetValue("station.distant_join_stations") == 0) return 0;
+    if (GSGameSettings.IsValid("station.station_spread")) return GSGameSettings.GetValue("station.station_spread");
+  } catch (e) {}
+  return 12;
 }
 
 /* Operations left before the script is suspended for this tick. */
