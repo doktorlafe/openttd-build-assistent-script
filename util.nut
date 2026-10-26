@@ -142,6 +142,30 @@ function U_Clip(s)
   return s.slice(0, n) + "...";
 }
 
+/* Copy of v for the savegame: OpenTTD saves no string longer than 255 bytes
+ * (the whole save fails then), so every string is cut to fit. */
+function U_SaveSafe(v)
+{
+  local t = typeof v;
+  if (t == "string") {
+    if (v.len() <= 250) return v;
+    local n = 247;
+    while (n > 0 && (v[n] & 0xC0) == 0x80) n--;   // UTF-8 continuation byte
+    return v.slice(0, n) + "...";
+  }
+  if (t == "table") {
+    local out = {};
+    foreach (k, x in v) out.rawset(typeof k == "string" ? U_SaveSafe(k) : k, U_SaveSafe(x));
+    return out;
+  }
+  if (t == "array") {
+    local out = [];
+    foreach (x in v) out.append(U_SaveSafe(x));
+    return out;
+  }
+  return v;
+}
+
 /* Progress reporting for long one-shot searches (station places).
  * Jobs set g_report = { self, company, label, base } before the search;
  * U_Report(pct) shows base + pct/2 in the Story Book. */

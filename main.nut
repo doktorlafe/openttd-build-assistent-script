@@ -61,7 +61,13 @@ function LafeBuildAssistant::Save()
     local d = Job_SaveData(job);
     if (d != null) jobs.rawset(c, d);
   }
-  return { pages = this.pages, picks = this.picks, hist = this.hist, logs = this.logs, jobs = jobs, queue = this.queue, chains = this.chains, bigst = this.bigst, loops = this.loops };
+  // texts are cut to the 255 byte limit of the savegame; the actions and the
+  // tile lists hold no long texts and are big, so they are saved as they are
+  foreach (c, d in jobs) {
+    foreach (k, x in d) if (typeof x == "string" || (typeof x == "array" && k != "actions")) d.rawset(k, U_SaveSafe(x));
+  }
+  return { pages = U_SaveSafe(this.pages), picks = U_SaveSafe(this.picks), hist = U_SaveSafe(this.hist), logs = U_SaveSafe(this.logs),
+           jobs = jobs, queue = U_SaveSafe(this.queue), chains = U_SaveSafe(this.chains), bigst = this.bigst, loops = this.loops };
 }
 
 function LafeBuildAssistant::Load(version, data)
