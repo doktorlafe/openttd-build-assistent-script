@@ -19,6 +19,7 @@
 - [ ] **Check after building**: missing track pieces found and built again, the rest reported with tile X,Y
 - [ ] **Station choice**: Log says what was chosen at each end; a retry changes only the station where the search got stuck
 - [ ] **Benchmark**: setting "benchmark" + fixed savegame, BENCH lines and the summary
+- [ ] **Branch onto a loop line** (double rail): a second line to the same destination builds only the small station at the source; its tracks join the inbound track and leave the return track of the first line (bridge over the other track where needed)
 - [ ] **Loop station** (double rail, setting loop_station): through station at the destination, all platforms from one entry to one exit, return track starts at the back end and turns back; straight approach in front, the return track lies right beside it (tight loop); source gets 2 platforms; falls back to a normal end station when there is no room
 
 ## Known issues
