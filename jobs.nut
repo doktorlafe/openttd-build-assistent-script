@@ -373,7 +373,16 @@ function Job_Prep(self, job)
       job.loop <- job.mode == MODE_DOUBLE && link.to.kind != "station" && !job.rawin("transfer_to") &&
                   GSController.GetSetting("loop_station") != 0;
       sb = null;
-      if (job.loop) {
+      // a loop line to this destination exists: the new line becomes a branch of it
+      local br = job.loop && !job.rawin("reuse_failed") ? Job_FindLoop(self, job.company, link.to) : null;
+      if (br != null) {
+        job.branch <- br;
+        job.reuse = true;
+        sb = Job_LoopSpot(br);
+        // the first track may only use the inbound track, the second only the return track
+        foreach (t in br.out) job.blocked.rawset(t, true);
+      } else if (job.rawin("branch")) delete job.branch;
+      if (job.loop && sb == null) {
         sb = BuildRail_FindSpotAny(link.to, "to", link.cargo, c_from, plat, min_plat, len, job.blocked, true);
         if (sb == null) {
           job.loop = false;
@@ -390,7 +399,8 @@ function Job_Prep(self, job)
       // say what was chosen at each end, so the choice is clear in the Log
       foreach (pair in [[sa, link.from], [sb, link.to]]) {
         local sp = pair[0], how;
-        if (sp.rawin("existing")) how = "free platform row " + sp.rows + " of your station " + sp.station_name;
+        if (sp.rawin("branch")) how = "branch onto your loop line to " + sp.station_name + " (joins your inbound track, leaves your return track)";
+        else if (sp.rawin("existing")) how = "free platform row " + sp.rows + " of your station " + sp.station_name;
         else if (sp.rawin("join")) how = sp.plat + " new platform(s) beside your station " + GSStation.GetName(sp.join);
         else if (sp.rawin("join_sid")) how = sp.plat + " new platform(s) joined to " + GSStation.GetName(sp.join_sid);
         else how = "new station, " + sp.plat + " platform(s)" + (sp.level ? ", land levelled" : "");
@@ -413,7 +423,7 @@ function Job_Prep(self, job)
       job.goal_tile = sb.G[r1];
       job.goal_dir = (sb.d + 2) % 4;
       job.goal_front <- sb.F[r1];
-      if (job.rawin("loop") && job.loop) Job_LoopApproach(job, sb);
+      if (job.rawin("loop") && job.loop && !job.rawin("branch")) Job_LoopApproach(job, sb);
     } else {
       // enter the through station at its back end, moving towards its front
       job.goal_tile = sb.Gb[0];
@@ -475,6 +485,11 @@ function Job_StartSecondTrack(job)
   Job_ResetCache(job);
   // the lane kept free beside the loop approach is for this track
   if (job.rawin("lane")) foreach (x in job.lane) if (job.blocked.rawin(x)) job.blocked.rawdelete(x);
+  // branch: now the return track of the loop line may be used, the inbound one not
+  if (job.rawin("branch")) {
+    foreach (x in job.branch.out) if (job.blocked.rawin(x)) job.blocked.rawdelete(x);
+    foreach (x in job.branch.inn) job.blocked.rawset(x, true);
+  }
   foreach (t in job.path1.tiles) {
     job.blocked.rawset(t, true);
     foreach (n in U_Neighbours(t)) job.near.rawset(n, true);
@@ -524,6 +539,7 @@ function Job_Plan(self, job)
     if (job.build_all) foreach (sp in job.chain.plan) build.append(sp);
     else if (!job.rawin("chain")) build = [sa, sb];
     foreach (sp in build) {
+      if (sp.rawin("branch")) continue;   // the loop station of the line is built already
       if (sp.rawin("existing")) {
         // a free row of an own station: only the switches and the link to its switch column
         BuildRail_FanActions(sp, dbl, pieces);
@@ -579,7 +595,7 @@ function Job_Plan(self, job)
       // station entries: path signals so trains wait for a free platform / free line
       if (dbl) {
         PathRail_StationSignals(sa, 1, extra);        // track 2 arrives at A on row 1
-        PathRail_StationSignals(sb, job.r1, extra);    // track 1 arrives at B on row r1
+        if (!sb.rawin("branch")) PathRail_StationSignals(sb, job.r1, extra);    // track 1 arrives at B on row r1
       } else if (sa.plat >= 2 || sa.rawin("existing") || sb.rawin("existing")) {
         // only the ends this leg connects (a through station's other end may have no track yet)
         extra.append({ op = "signal", t = sa.G[0], f = sa.F[0], kind = "twoway" });
@@ -607,7 +623,8 @@ function Job_Plan(self, job)
   }
   local summary = Job_ModeName(job.mode) + " " + job.names + " (" + job.cargo_name + "): " + tiles + " tiles, " +
     bridges + " bridge(s), " + tunnels + " tunnel(s), cost about " + job.cost;
-  if (job.rawin("loop") && job.loop) summary += ", loop station at " + Tg_Name(job.link.to);
+  if (job.rawin("branch")) summary += ", branch onto your loop line to " + Tg_Name(job.link.to);
+  else if (job.rawin("loop") && job.loop) summary += ", loop station at " + Tg_Name(job.link.to);
   if (job.rawin("reuse_failed")) summary += " (My tracks found no way, all-new track)";
   if (job.mode != MODE_ROAD && job.reuse) {
     local used = 0, all = 0;
@@ -810,6 +827,53 @@ function Job_Verify(self, job)
   }
 }
 
+/* Loop lines: remembered after building, so a later line to the same
+ * destination becomes a branch (joins the inbound track, leaves the return
+ * track) instead of building a second station there. */
+function Job_FindLoop(self, company, e)
+{
+  if (!self.loops.rawin(company)) return null;
+  foreach (r in self.loops.rawget(company)) {
+    if (r.kind != e.kind || r.id != e.id) continue;
+    // still there: the station and the track in front of it
+    if (!GSRail.IsRailStationTile(r.P[0]) || GSTile.GetOwner(r.P[0]) != company) continue;
+    if (!GSRail.IsRailTile(r.G[0]) || !GSRail.IsRailTile(r.Gb[0])) continue;
+    return r;
+  }
+  return null;
+}
+
+/* Station spot of a remembered loop line (nothing is built there). */
+function Job_LoopSpot(r)
+{
+  return { branch = true, existing = true, d = r.d, s = r.s, plat = r.plat, len = r.len, anchor = r.anchor,
+           P = r.P, F = r.F, G = r.G, Pb = r.Pb, Fb = r.Fb, Gb = r.Gb, tiles = [], level = false,
+           station_name = GSStation.GetName(GSStation.GetStationID(r.P[0])) };
+}
+
+function Job_RememberLoop(self, job)
+{
+  if (!job.rawin("path1") || !job.rawin("path2")) return;   // loaded from a save: the paths are gone
+  if (!self.loops.rawin(job.company)) self.loops.rawset(job.company, []);
+  local list = self.loops.rawget(job.company);
+  local r;
+  if (job.rawin("branch")) {
+    r = job.branch;
+  } else {
+    local sb = job.spB;
+    r = { kind = job.link.to.kind, id = job.link.to.id, d = sb.d, s = sb.s, plat = sb.plat, len = sb.len, anchor = sb.anchor,
+          P = clone sb.P, F = clone sb.F, G = clone sb.G, Pb = clone sb.Pb, Fb = clone sb.Fb, Gb = clone sb.Gb, inn = [], out = [] };
+    list.append(r);
+    while (list.len() > 12) list.remove(0);
+  }
+  // the new tracks join the line, so later branches can join them too
+  foreach (pair in [[r.inn, job.path1.tiles], [r.out, job.path2.tiles]]) {
+    local have = {};
+    foreach (t in pair[0]) have.rawset(t, true);
+    foreach (t in pair[1]) if (!have.rawin(t)) { pair[0].append(t); have.rawset(t, true); }
+  }
+}
+
 function Job_Finish(self, job)
 {
   local text = Job_ModeName(job.mode) + " " + job.names + " built";
@@ -827,6 +891,7 @@ function Job_Finish(self, job)
       memo.append(BuildRail_Memo(sp));
     }
     while (memo.len() > 60) memo.remove(0);
+    if (job.rawin("loop") && job.loop) Job_RememberLoop(self, job);
   }
   if (job.rawin("transfer_to")) text += ". Transfer: the cargo goes on to " + job.transfer_name + " with your trains from the hub";
   if (job.veh_text != "") text += "." + job.veh_text;

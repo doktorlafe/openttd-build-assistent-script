@@ -310,7 +310,7 @@ function PathRail_GoalReachable(job)
   local back = (job.goal_dir + 2) % 4;
   local t = U_Step(job.goal_tile, back);
   if (t < 0) return false;
-  return PathRail_Cost(job, t) >= 0 || PathRail_CanCross(job, t, job.goal_dir);
+  return PathRail_Cost(job, t) >= 0 || PathRail_CanCross(job, t, job.goal_dir) || (job.reuse && PathRail_Usable(job, t));
 }
 
 /* Goal: the station entry, or (for a part of a long route) any tile near the

@@ -25,6 +25,7 @@ class LafeBuildAssistant extends GSController {
   queue = null;   // company -> legs still to build from a town list
   chains = null;  // company -> { list, spots, depot } of the town list being built
   bigst = null;   // company -> [stations built by the script, for later lines to join]
+  loops = null;   // company -> [loop lines: station + inbound and return track tiles, for branches]
   bench = null;   // benchmark run (setting "benchmark"), not saved
   bench_wait = false;   // benchmark waits for the first company
   turn = 0;       // round robin over the companies
@@ -40,6 +41,7 @@ class LafeBuildAssistant extends GSController {
     this.queue = {};
     this.chains = {};
     this.bigst = {};
+    this.loops = {};
   }
 
   function Start();
@@ -59,7 +61,7 @@ function LafeBuildAssistant::Save()
     local d = Job_SaveData(job);
     if (d != null) jobs.rawset(c, d);
   }
-  return { pages = this.pages, picks = this.picks, hist = this.hist, logs = this.logs, jobs = jobs, queue = this.queue, chains = this.chains, bigst = this.bigst };
+  return { pages = this.pages, picks = this.picks, hist = this.hist, logs = this.logs, jobs = jobs, queue = this.queue, chains = this.chains, bigst = this.bigst, loops = this.loops };
 }
 
 function LafeBuildAssistant::Load(version, data)
@@ -71,6 +73,7 @@ function LafeBuildAssistant::Load(version, data)
   if (data.rawin("queue")) this.queue = data.rawget("queue");
   if (data.rawin("chains")) this.chains = data.rawget("chains");
   if (data.rawin("bigst")) this.bigst = data.rawget("bigst");
+  if (data.rawin("loops")) this.loops = data.rawget("loops");
   if (data.rawin("jobs")) {
     foreach (c, d in data.rawget("jobs")) this.jobs.rawset(c, Job_LoadData(d));
   }
