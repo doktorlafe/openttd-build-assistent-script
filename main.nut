@@ -87,7 +87,8 @@ function LafeBuildAssistant::Load(version, data)
 
 function LafeBuildAssistant::Start()
 {
-  U_Log("i", "Lafe Build Assistant v3 started");
+  U_MapInit();   // before anything that steps over tiles
+  U_Log("i", "Lafe Build Assistant v3 (fast search, 2026-10-26) started, opcodes per tick: " + GSGameSettings.GetValue("script.script_max_opcode_till_suspend"));
   this.Sleep(1);
   try { Preview_CleanLeftovers(); } catch (e) {}
   for (local i = 0; i < 15; i++) {

@@ -1,27 +1,56 @@
 /* Small helpers shared by all modules.
  * Directions are indexes 0..3: 0 = +x, 1 = +y, 2 = -x, 3 = -y. 4 = none. */
 
-function U_Vec(i)
+/* Map size and the index offset of one step in each direction, set by
+ * U_MapInit() at the start. A tile index is y * size_x + x, so a step is a
+ * plain addition: much cheaper than the GSMap calls (the route search does
+ * this millions of times). */
+g_mx <- 0;        // map size x
+g_mx1 <- 0;       // size x - 1 (first border column)
+g_lim <- 0;       // first tile of the bottom border row
+g_off <- [1, 0, -1, 0];
+g_vec <- [[1, 0], [0, 1], [-1, 0], [0, -1]];
+
+function U_MapInit()
 {
-  return [[1, 0], [0, 1], [-1, 0], [0, -1]][i];
+  ::g_mx = GSMap.GetMapSizeX();
+  ::g_mx1 = ::g_mx - 1;
+  ::g_lim = (GSMap.GetMapSizeY() - 1) * ::g_mx;
+  ::g_off = [1, ::g_mx, -1, -::g_mx];
 }
 
-/* Neighbour tile in direction i, or -1 at the map edge. */
+function U_Vec(i)
+{
+  return ::g_vec[i];
+}
+
+/* Neighbour tile in direction i, or -1 at the map edge. A step over the left
+ * or right edge lands in the border column of the next or previous row, so
+ * the x check catches it. */
 function U_Step(tile, i)
 {
-  local v = U_Vec(i);
-  local x = GSMap.GetTileX(tile) + v[0], y = GSMap.GetTileY(tile) + v[1];
-  if (x < 1 || y < 1 || x >= GSMap.GetMapSizeX() - 1 || y >= GSMap.GetMapSizeY() - 1) return -1;
-  return GSMap.GetTileIndex(x, y);
+  local n = tile + ::g_off[i];
+  local x = n % ::g_mx;
+  if (x < 1 || x >= ::g_mx1 || n < ::g_mx || n >= ::g_lim) return -1;
+  return n;
 }
 
 /* Tile moved by n steps in direction i, or -1. */
 function U_StepN(tile, i, n)
 {
-  local v = U_Vec(i);
-  local x = GSMap.GetTileX(tile) + v[0] * n, y = GSMap.GetTileY(tile) + v[1] * n;
-  if (x < 1 || y < 1 || x >= GSMap.GetMapSizeX() - 1 || y >= GSMap.GetMapSizeY() - 1) return -1;
-  return GSMap.GetTileIndex(x, y);
+  local x = tile % ::g_mx, y = tile / ::g_mx;
+  if (i == 0) x += n; else if (i == 1) y += n; else if (i == 2) x -= n; else y -= n;
+  if (x < 1 || y < 1 || x >= ::g_mx1 || y * ::g_mx >= ::g_lim) return -1;
+  return y * ::g_mx + x;
+}
+
+/* Manhattan distance without an API call. */
+function U_Dist(a, b)
+{
+  local dx = a % ::g_mx - b % ::g_mx, dy = a / ::g_mx - b / ::g_mx;
+  if (dx < 0) dx = -dx;
+  if (dy < 0) dy = -dy;
+  return dx + dy;
 }
 
 /* Direction from a to b (they should share an axis). */
@@ -206,6 +235,12 @@ function U_Log(level, text)
  * or "no route". U_NoCash() counts such failures in g_nocash, so the job can
  * tell the player the real reason. */
 g_nocash <- 0;
+
+/* Through station layouts: side of the platform rows as seen from a train
+ * arriving at the front (1 = right, 3 = left), or -1 for the usual layout.
+ * Set while the loop station is searched, so its return track lies on the
+ * same side of the inbound track as at the source and the tracks never cross. */
+g_want_rel <- -1;
 
 function U_NoCash()
 {

@@ -86,13 +86,13 @@ function PathRoad_Nb(job, cur, kind)
 
 function PathRoad_Goal(job, k, kind)
 {
-  if (job.wp >= 0) return kind == 0 && GSMap.DistanceManhattan(K_Tile(k), job.wp) <= job.wp_tol;
+  if (job.wp >= 0) return kind == 0 && U_Dist(k >> 5, job.wp) <= job.wp_tol;
   return K_Tile(k) == job.goal_tile;
 }
 
 function PathRoad_H(job, k)
 {
-  return 3 * GSMap.DistanceManhattan(K_Tile(k), job.wp >= 0 ? job.wp : job.goal_tile);
+  return 3 * U_Dist(k >> 5, job.htile);
 }
 
 /* Turns a found path into build actions: bridges and tunnels first,

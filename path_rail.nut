@@ -5,8 +5,14 @@
  * straight again - costs extra, because trains slow down a lot there; the
  * search prefers a smooth bend through a short diagonal instead.
  *
+ * Diagonal track is cheaper per tile than straight track (4 instead of 5): a
+ * diagonal tile is only about 0.7 tile long for a train, so a diagonal line is
+ * the shorter and faster way (the same idea as in the ChooChoo AI). Entering
+ * and leaving a diagonal costs extra, so short zigzags do not pay off and the
+ * route keeps long straight and long diagonal stretches.
+ *
  * One tile is visited in up to 12 states, so everything we learn about a tile
- * is cached in the job (job.cc, job.xc, job.bc, job.tc). */
+ * is cached in the job (job.cc, job.xc, job.bc, job.tc, job.ic). */
 
 /* Base cost to lay track on a tile, or -1. Cached. */
 function PathRail_Cost(job, t)
@@ -17,20 +23,56 @@ function PathRail_Cost(job, t)
     // costs stay below the search estimate (7 per tile, see PathRail_H): if a
     // tile cost more than that, the search would stop heading for the goal and
     // spread out in hilly land
-    if (U_IsFlat(t)) c = 5;
-    else if (!U_IsSteep(t)) c = 6;
+    local slope = GSTile.GetSlope(t);
+    if (slope == GSTile.SLOPE_FLAT) c = 5;
+    else if (!GSTile.IsSteepSlope(slope)) c = 6;
     else if (job.terra && PathRail_CanLevel(job, t)) c = 7;   // levelled before the track is laid
-    else c = -1;
-    // follow what is built: right beside an own track is cheaper, so a new line
-    // runs alongside the old ones, copies their line and takes their way
-    // around hills, water and towns
-    if (c >= 0 && job.follow && PathRail_NextToOwn(job, t)) c = max(2, c - 2);
-    // second track: right next to the first is very cheap, anywhere else expensive,
-    // so the two tracks run side by side and take as little land as possible
-    if (job.rawin("near") && job.near.len() > 0) c = job.near.rawin(t) ? 1 : c + 6;
+    if (c >= 0) {
+      local around = PathRail_Around(job, t);
+      // keep a little room beside the line: right next to houses, water and
+      // other obstacles costs a bit more, so the line does not squeeze along
+      // them and there is space for a second track or a junction later
+      if ((around & 2) != 0) c = min(7, c + 1);
+      // follow what is built: right beside an own track is cheaper, so a new line
+      // runs alongside the old ones, copies their line and takes their way
+      // around hills, water and towns
+      if (job.follow && (around & 1) != 0) c = max(2, c - 2);
+      // second track: right next to the first is very cheap, anywhere else expensive,
+      // so the two tracks run side by side and take as little land as possible
+      // (only on tiles where track can be laid at all)
+      if (job.rawin("near") && job.near.len() > 0) c = job.near.rawin(t) ? 1 : c + 6;
+    }
   }
   job.cc.rawset(t, c);
   return c;
+}
+
+/* What is right next to tile t: 1 = an own plain track (follow lines),
+ * 2 = an obstacle (not buildable, not a road or track: houses, water,
+ * industries, foreign stations). */
+function PathRail_Around(job, t)
+{
+  local r = 0;
+  for (local i = 0; i < 4; i++) {
+    local n = U_Step(t, i);
+    if (n < 0) continue;
+    if (GSRail.IsRailTile(n)) {
+      if (job.follow && (r & 1) == 0 && !GSRail.IsRailStationTile(n) && !GSRail.IsRailDepotTile(n) &&
+          GSTile.GetOwner(n) == job.me) r = r | 1;
+    } else if ((r & 2) == 0 && !GSTile.IsBuildable(n) && !GSRoad.IsRoadTile(n)) {
+      r = r | 2;
+    }
+  }
+  return r;
+}
+
+/* Rail tile (any owner)? Cached: the search asks for every state of a tile. */
+function PathRail_IsRail(job, t)
+{
+  if (job.ic.rawin(t)) return job.ic.rawget(t);
+  local r = GSRail.IsRailTile(t);
+  job.ic.rawset(t, r);
+  return r;
 }
 
 /* Permission: may this company's trains run on the track on tile t?
@@ -135,15 +177,6 @@ function PathRail_LevelActions(path, first, last, out)
   return n;
 }
 
-/* Is an own plain track right next to tile t (not a station or depot)? */
-function PathRail_NextToOwn(job, t)
-{
-  foreach (n in U_Neighbours(t)) {
-    if (GSRail.IsRailTile(n) && !GSRail.IsRailStationTile(n) && !GSRail.IsRailDepotTile(n) && GSTile.GetOwner(n) == job.me) return true;
-  }
-  return false;
-}
-
 function PathRail_Flat(job, t)
 {
   local k = -1 - t;   // negative keys in the same cache
@@ -229,31 +262,36 @@ function PathRail_Tunnel(job, tile)
 
 function PathRail_Nb(job, cur, kind)
 {
-  local tile = K_Tile(cur), dir = K_Dir(cur), last = K_Turn(cur);
+  local tile = cur >> 5, low = cur & 31;   // K_Tile, K_Dir, K_Turn without the calls
+  local dir = low / 5, last = low % 5;
   local out = [];
   // on an existing own track (My tracks on) the track pieces decide where it may go
   local reuse = job.reuse && kind == 0 && PathRail_Usable(job, tile);
-  local prev = reuse ? U_Step(tile, (dir + 2) % 4) : -1;
+  local opp = (dir + 2) % 4, left = (dir + 1) % 4;
+  local back = U_Step(tile, opp);
+  local prev = reuse ? back : -1;
   // no turning on crossings or after a bridge/tunnel; on slopes only when a
   // curve fits there (foundation) or the tile can be levelled (landscaping)
-  local straight = !reuse && (kind != 0 || PathRail_IsRoad(job, tile) || GSRail.IsRailTile(tile));
+  local straight = !reuse && (kind != 0 || PathRail_IsRoad(job, tile) || PathRail_IsRail(job, tile));
   local sloped = !reuse && !straight && !PathRail_Flat(job, tile);
-  local back = U_Step(tile, (dir + 2) % 4);
+  local side = last == 0 ? 0 : (last - 1) % 2 + 1;   // K_Side
+  local twin = job.twin >= 0 && !(job.rawin("near") && job.near.len() > 0);
 
   for (local i = 0; i < 4; i++) {
-    if (i == (dir + 2) % 4) continue;
+    if (i == opp) continue;
     local turn = 0;
-    if (i == (dir + 1) % 4) turn = 1;
-    else if (i == (dir + 3) % 4) turn = 2;
-    if (straight && turn != 0) continue;
-    local side = K_Side(last);
-    if (turn != 0 && turn == side) continue;
-    // extra cost: start of a bend 2, diagonal continues 1, straight right after a single curve piece 6
+    if (i == left) turn = 1;
+    else if (i != dir) turn = 2;
+    if (turn != 0 && (straight || turn == side)) continue;
+    // extra cost: start of a bend 2, diagonal continues -1 (shorter way),
+    // straight after a diagonal 2, straight right after a single curve piece 6
     local extra = 0, state = turn;
     if (turn != 0) {
-      if (side != 0) { state = turn + 2; extra = 1; } else extra = 2;
+      if (side != 0) { state = turn + 2; extra = -1; } else extra = 2;
     } else if (last == 1 || last == 2) {
       extra = 6;
+    } else if (last != 0) {
+      extra = 2;
     }
     local n = U_Step(tile, i);
     if (n < 0) continue;
@@ -272,6 +310,14 @@ function PathRail_Nb(job, cur, kind)
       continue;
     }
     local c = PathRail_Cost(job, n);
+    // double track, first track: the second one must fit right beside it (on
+    // its side), otherwise the two drift apart on hills; a tile without room
+    // for the twin costs a little more, so the route takes a corridor wide
+    // enough for both
+    if (c >= 0 && twin) {
+      local tw = U_Step(n, (i + job.twin) % 4);
+      if (tw < 0 || (PathRail_Cost(job, tw) < 0 && !(job.reuse && PathRail_Usable(job, tw)))) extra += 2;
+    }
     // run on the existing own track: much cheaper than new track (5), so lines to
     // the same place share one corridor and take little new land
     if (c < 0 && job.reuse && PathRail_Usable(job, n)) c = 1;
@@ -281,9 +327,10 @@ function PathRail_Nb(job, cur, kind)
       c = PathRail_IsRoad(job, n) ? 20 : 30;
     }
     if (c >= 0) {
-      out.append([K_Make(n, i, state), c + extra, 0]);
+      local cost = c + extra;
+      out.append([K_Make(n, i, state), cost < 1 ? 1 : cost, 0]);
       // a track or road ahead: also offer a bridge over it (flyover)
-      if (!GSRail.IsRailTile(n) && !PathRail_IsRoad(job, n)) continue;
+      if (!PathRail_IsRail(job, n) && !PathRail_IsRoad(job, n)) continue;
     }
     // blocked (or a track / road) straight ahead: bridge with its head on this tile
     if (job.allow_br && kind == 0 && turn == 0) {
@@ -291,7 +338,7 @@ function PathRail_Nb(job, cur, kind)
       // a bridge must not land right in front of the station entry: there is
       // no room left to turn and join the station switches (except when it
       // lands on the entry itself, in line with the platforms)
-      if (b != null && b[0] != job.goal_tile && GSMap.DistanceManhattan(b[0], job.goal_tile) <= 3) b = null;
+      if (b != null && b[0] != job.goal_tile && U_Dist(b[0], job.goal_tile) <= 3) b = null;
       if (b != null) out.append([K_Make(b[0], i, 0), 12 + b[1] * 8, 1]);
     }
   }
@@ -317,16 +364,24 @@ function PathRail_GoalReachable(job)
  * waypoint that was not reached over a bridge or tunnel. */
 function PathRail_Goal(job, k, kind)
 {
-  if (job.wp >= 0) return kind == 0 && GSMap.DistanceManhattan(K_Tile(k), job.wp) <= job.wp_tol;
-  return K_Tile(k) == job.goal_tile && K_Dir(k) == job.goal_dir;
+  if (job.wp >= 0) return kind == 0 && U_Dist(k >> 5, job.wp) <= job.wp_tol;
+  return (k >> 5) == job.goal_tile && K_Dir(k) == job.goal_dir;
 }
 
-/* More than the real minimum (5 per tile): the search goes straight for the
- * target and examines far fewer tiles. job.hw comes from the route_quality
- * setting: 8 = fast, 7 = balanced, 6 = closer to the cheapest route. */
+/* More than the real minimum, so the search goes straight for the target and
+ * examines far fewer tiles. The minimum is 5 per tile straight and 4 per tile
+ * diagonal: dx + dy tiles, of which 2 * min(dx, dy) can be diagonal. job.hw
+ * comes from the route_quality setting: 8 = fast, 7 = balanced, 6 = closer to
+ * the cheapest route. job.htile = the waypoint or the goal (Job_NewAStar).
+ * Plain arithmetic, no API call: this runs for every tile the search sees. */
 function PathRail_H(job, k)
 {
-  return job.hw * GSMap.DistanceManhattan(K_Tile(k), job.wp >= 0 ? job.wp : job.goal_tile);
+  local t = k >> 5, g = job.htile;
+  local dx = t % ::g_mx - g % ::g_mx, dy = t / ::g_mx - g / ::g_mx;
+  if (dx < 0) dx = -dx;
+  if (dy < 0) dy = -dy;
+  local m = dx < dy ? dx : dy;
+  return job.hw * (dx + dy) - job.hw * 2 * m / 5;
 }
 
 /* Build actions for one track. first/last are the station front tiles

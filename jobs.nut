@@ -41,6 +41,7 @@ function Job_SearchSetup(job)
   job.max_tu <- GSController.GetSetting("max_tunnel_length");
   job.goal_tile <- -1;
   job.goal_dir <- 4;
+  job.twin <- -1;
   job.hw <- [8, 7, 6][GSController.GetSetting("route_quality")];
   if (!job.rawin("reuse")) job.reuse <- false;
   job.terra <- GSController.GetSetting("allow_terraform") != 0;
@@ -60,6 +61,7 @@ function Job_ResetCache(job)
   job.lc <- {};   // can this tile be levelled
   job.uc <- {};   // may run on this own track tile (My tracks)
   job.rc <- {};   // existing track piece checks (My tracks)
+  job.ic <- {};   // is this a rail tile
   // My tracks counters for the debug page: usable tiles seen, moves along the
   // old track, possible switches, refused by a one-way signal / by the test build
   job.rs <- { tiles = 0, along = 0, join = 0, oneway = 0, refused = 0, last = "" };
@@ -90,6 +92,7 @@ function Job_BeginSearch(job, start_key)
   job.acc <- { tiles = [], kinds = [] };
   job.seg_start <- start_key;
   job.t0 <- GSController.GetTick();   // for the time estimate in the Story Book
+  job.exam0 <- Job_Examined(job);     // for the search speed in the status line
   Job_NewAStar(job, start_key);
 }
 
@@ -118,6 +121,8 @@ function Job_NewAStar(job, key)
   if (job.rawin("astar") && job.astar != null) job.exam_sum <- Job_Examined(job);
   // a part towards a waypoint gives up sooner, so a bad waypoint costs little
   local limit = (job.wp >= 0 ? max(20000, Job_Limit() / 4) : Job_Limit()) * job.boost;
+  // where the estimate points: this part's waypoint, or the goal
+  job.htile <- job.wp >= 0 ? job.wp : job.goal_tile;
   if (job.mode == MODE_ROAD)
     job.astar <- AStar(job, [key], PathRoad_Nb, PathRoad_Goal, PathRoad_H, limit);
   else
@@ -259,6 +264,13 @@ function Job_Why(job)
   return "no way through";
 }
 
+/* Tiles examined per game day (74 ticks) since this search began. */
+function Job_Speed(job)
+{
+  local ticks = max(1, GSController.GetTick() - job.t0);
+  return (Job_Examined(job) - job.exam0) * 74 / ticks;
+}
+
 function Job_HW(job)
 {
   return job.mode == MODE_ROAD ? 3 : job.hw;
@@ -383,7 +395,11 @@ function Job_Prep(self, job)
         foreach (t in br.out) job.blocked.rawset(t, true);
       } else if (job.rawin("branch")) delete job.branch;
       if (job.loop && sb == null) {
+        // rows on the side where the return track is at the source (mirrored layout if needed)
+        ::g_want_rel = -1;
+        for (local i = 0; i < 4; i++) if (sa.plat >= 2 && U_Step(sa.G[0], i) == sa.G[1]) ::g_want_rel = (i - sa.d + 4) % 4;
         sb = BuildRail_FindSpotAny(link.to, "to", link.cargo, c_from, plat, min_plat, len, job.blocked, true);
+        ::g_want_rel = -1;
         if (sb == null) {
           job.loop = false;
           UI_Diag(self, job.company, "i", "No room for a loop station at " + Tg_Name(link.to) + ", a normal end station is used.");
@@ -417,6 +433,13 @@ function Job_Prep(self, job)
       r1 = same ? 0 : 1;
     }
     job.r1 <- r1;
+    // side of the second track as seen from a train on the first one:
+    // 1 = right, 3 = left (from the row order at A)
+    job.twin <- -1;
+    if (job.mode == MODE_DOUBLE && sa.plat >= 2) {
+      for (local i = 0; i < 4; i++) if (U_Step(sa.G[0], i) == sa.G[1]) job.twin = (i - sa.d + 4) % 4;
+      if (job.twin != 1 && job.twin != 3) job.twin = -1;
+    }
     job.approach <- [];
     job.lane <- [];
     if (last) {
@@ -523,7 +546,7 @@ function Job_StartSecondTrack(job)
 function Job_Plan(self, job)
 {
   Job_LiveClear(job);
-  local acts = [], specials = [], pieces = [], extra = [];
+  local acts = [], specials = [], pieces = [], extra = [], levels = [];
   local paths = [job.path1];
   if (job.mode == MODE_ROAD) {
     foreach (a in job.stations) acts.append(a);
@@ -563,7 +586,6 @@ function Job_Plan(self, job)
                          " more platform(s), linked " + (x == 2 ? "both ways" : "one way") + " with the old ones: one big station.");
     }
     // landscaping first, then bridges/tunnels, then the track
-    local levels = [];
     local nl = PathRail_LevelActions(job.path1, sa.F[0], job.goal_front, levels);
     if (dbl) nl += PathRail_LevelActions(job.path2, p2a, p2b, levels);
     if (nl > 0) UI_Diag(self, job.company, "i", job.names + ": " + nl + " tile(s) of the route will be levelled (landscaping).");
@@ -596,6 +618,10 @@ function Job_Plan(self, job)
       if (dbl) {
         PathRail_StationSignals(sa, 1, extra);        // track 2 arrives at A on row 1
         if (!sb.rawin("branch")) PathRail_StationSignals(sb, job.r1, extra);    // track 1 arrives at B on row r1
+        // loop station: an exit signal behind every platform, so each platform
+        // is a safe place to stop and one train does not hold up the others
+        if (loop && !sb.rawin("branch") && sb.rawin("Pe"))
+          for (local r = 0; r < sb.plat; r++) extra.append({ op = "signal", t = sb.Pb[r], f = sb.Fb[r], kind = "oneway" });
       } else if (sa.plat >= 2 || sa.rawin("existing") || sb.rawin("existing")) {
         // only the ends this leg connects (a through station's other end may have no track yet)
         extra.append({ op = "signal", t = sa.G[0], f = sa.F[0], kind = "twoway" });
@@ -613,6 +639,20 @@ function Job_Plan(self, job)
   job.idx = 0;
 
   job.cost = Act_Estimate(job, acts);
+  // track pieces that fail the test run would leave a hole in the line:
+  // plan the route once more around them
+  if (job.mode != MODE_ROAD && !job.rawin("replanned")) {
+    local bad = Job_BadTiles(job, levels);
+    if (bad.len() > 0) {
+      job.replanned <- true;
+      foreach (t in bad) job.avoid.rawset(t, true);
+      UI_Diag(self, job.company, "i", job.names + ": " + bad.len() + " track piece(s) failed the test run (first at tile " +
+              GSMap.GetTileX(bad[0]) + "," + GSMap.GetTileY(bad[0]) + "), planning the route again around them.");
+      job.astar = null;
+      job.state = "PREP";
+      return;
+    }
+  }
   local bank = GSCompany.GetBankBalance(job.company);
   local limit = bank / 100 * GSController.GetSetting("cost_limit_percent");
   local bridges = 0, tunnels = 0, tiles = 0;
@@ -679,6 +719,27 @@ function Job_Plan(self, job)
     UI_Status(self, job.company, summary + ". Money after building about " + left +
       (job.est_nocash > 0 ? " (NOT ENOUGH MONEY for all pieces!)" : "") + ". Press Build or Cancel.");
   }
+}
+
+/* Tiles of track pieces that failed the test run where the failure is real:
+ * not on or next to a tile that is levelled first (levelling happens only
+ * when building, so the test run still sees the old slope) and not at a
+ * station (its tiles do not exist yet in the test run either). */
+function Job_BadTiles(job, levels)
+{
+  local skip = {}, out = [];
+  local around = [];
+  foreach (a in levels) around.append(a.a);
+  foreach (sp in [job.spA, job.spB]) if (sp.rawin("tiles")) foreach (t in sp.tiles) around.append(t);
+  foreach (t in around) {
+    skip.rawset(t, true);
+    for (local i = 0; i < 4; i++) {
+      local n = U_Step(t, i);
+      if (n >= 0) skip.rawset(n, true);
+    }
+  }
+  foreach (t in job.est_bad) if (!skip.rawin(t)) out.append(t);
+  return out;
 }
 
 /* Town list: finds a station place in every town before any track is laid.
@@ -809,7 +870,7 @@ function Job_Verify(self, job)
     if (a.op != "rail") continue;
     if (GSRail.AreTilesConnected(a.p, a.t, a.n)) continue;
     missing++;
-    if (GSRail.BuildRail(a.p, a.t, a.n) && GSRail.AreTilesConnected(a.p, a.t, a.n)) fixed++;
+    if (Act_Rail(a) && GSRail.AreTilesConnected(a.p, a.t, a.n)) fixed++;
     else if (where < 0) where = a.t;
   }
   if (missing == 0) {
@@ -964,7 +1025,7 @@ function Job_Step(self, job)
         local pct = max(0, min(99, (job.wp_i * 100 + a.Closeness()) / segs));
         UI_Status(self, job.company, "Searching " + job.names + (job.state == "SEARCH2" ? " (second track)" : "") +
           ": " + pct + "%, " + Job_Eta(job, pct) + ", part " + (job.wp_i + 1) + "/" + segs + ", " + a.examined / 1000 +
-          "k tiles examined, closest " + (a.best_h < 0 ? "?" : (a.best_h / max(1, Job_HW(job))).tostring()) + " tiles from the goal");
+          "k tiles examined (" + Job_Speed(job) + " per game day), closest " + (a.best_h < 0 ? "?" : (a.best_h / max(1, Job_HW(job))).tostring()) + " tiles from the goal");
       }
       return;
     }

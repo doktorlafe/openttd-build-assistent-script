@@ -32,12 +32,15 @@ function BuildRail_Offset(tile, d, s, k, r)
 }
 
 /* Lays out a station whose platform row 0 ends at e0, facing direction d.
- * through = also switch tiles at the back end (Pb/Fb/Gb), so trains can
- * enter at one end and leave at the other (station in the middle of a line).
+ * through = also tiles at the back end, so trains can enter at one end and
+ * leave at the other: Pe = last platform tile, Pb = one plain track tile for
+ * the exit signal of that platform (a signal cannot stand on a station tile or
+ * a switch), Fb = switches, Gb = where the line leaves.
  * Returns the spot table or null if a tile is off the map. */
 function BuildRail_Layout(e0, d, plat, len, through)
 {
   local s = (d % 2 == 0) ? 1 : 0;
+  if (through && ::g_want_rel >= 0) s = (::g_want_rel + d) % 4;
   local sp = { d = d, s = s, plat = plat, len = len, P = [], F = [], G = [], tiles = [] };
   local minx = 100000, miny = 100000;
   for (local r = 0; r < plat; r++) {
@@ -62,16 +65,19 @@ function BuildRail_Layout(e0, d, plat, len, through)
     sp.dep_front <- BuildRail_Offset(e0, d, s, -(len - 1), 0);
   }
   if (through) {
+    sp.Pe <- [];
     sp.Pb <- [];
     sp.Fb <- [];
     sp.Gb <- [];
     for (local r = 0; r < plat; r++) {
-      local pb = BuildRail_Offset(e0, d, s, -(len - 1), r);
-      local fb = BuildRail_Offset(e0, d, s, -len, r), gb = BuildRail_Offset(e0, d, s, -len - 1, r);
-      if (fb < 0 || gb < 0) return null;
+      local pe = BuildRail_Offset(e0, d, s, -(len - 1), r), pb = BuildRail_Offset(e0, d, s, -len, r);
+      local fb = BuildRail_Offset(e0, d, s, -len - 1, r), gb = BuildRail_Offset(e0, d, s, -len - 2, r);
+      if (pb < 0 || fb < 0 || gb < 0) return null;
+      sp.Pe.append(pe);
       sp.Pb.append(pb);
       sp.Fb.append(fb);
       sp.Gb.append(gb);
+      sp.tiles.append(pb);
       sp.tiles.append(fb);
       sp.tiles.append(gb);
     }
@@ -246,8 +252,13 @@ function BuildRail_FindSpot(e, role, cargo, other, plat, len, blocked, through, 
   foreach (level in passes) {
     local tried = 0;
     local cap = level ? 500 : 2000;   // a levelling test is expensive
+    // flat land: not the first place that fits, but the best of the first few
+    // (room for the line in front, facing the other end, what it covers);
+    // levelled land: the first one, each test there is expensive
+    local best = null, best_s = 0, found = 0, first_at = -1;
     foreach (e0 in cands) {
       if (++tried > cap) break;
+      if (first_at >= 0 && (found >= 6 || tried - first_at > 80)) break;
       if (++done % 40 == 0) U_Report(done * 100 / max(1, total));
       if (blocked.rawin(e0) || !GSTile.IsBuildable(e0)) continue;
       foreach (d in U_DirsToward(e0, other)) {
@@ -255,13 +266,57 @@ function BuildRail_FindSpot(e, role, cargo, other, plat, len, blocked, through, 
         local sp = BuildRail_Layout(e0, d, plat, len, through);
         if (sp == null) continue;
         if (!BuildRail_Check(e, role, cargo, sp, blocked, radius, level)) continue;
-        U_Log("i", "Rail: station place found after " + tried + " tiles" + (level ? ", the land will be levelled" : ""));
-        return sp;
+        if (level) {
+          U_Log("i", "Rail: station place found after " + tried + " tiles, the land will be levelled");
+          return sp;
+        }
+        if (first_at < 0) first_at = tried;
+        // later candidates lie further from the preferred spot
+        local sc = BuildRail_SpotScore(e, cargo, sp, other, radius, blocked) - (tried - first_at) / 2;
+        if (best == null || sc > best_s) { best = sp; best_s = sc; }
+        found++;
+        break;   // one layout per tile: the best direction that fits
       }
+    }
+    if (best != null) {
+      U_Log("i", "Rail: station place found after " + tried + " tiles, best of " + found + " (score " + best_s + ")");
+      return best;
     }
   }
   if (!quiet) U_Diag("!", "No free " + len + "x" + plat + " station place at " + Tg_Name(e) + " (" + cands.len() + " tiles checked" + (terra ? "" : ", land levelling is off") + ").");
   return null;
+}
+
+/* How good a station place is (higher = better):
+ * - room in front: free straight tiles ahead of the rows that get a line, so
+ *   the line can leave straight instead of turning sharply at the switches
+ *   (fewer failed searches, faster trains),
+ * - facing the other end of the route,
+ * - for towns: how many houses it covers (passengers accepted). */
+function BuildRail_SpotScore(e, cargo, sp, other, radius, blocked)
+{
+  local score = 0;
+  local rows = min(2, sp.plat);
+  for (local r = 0; r < rows; r++) {
+    local t = sp.G[r];
+    for (local k = 0; k < 6; k++) {
+      t = U_Step(t, sp.d);
+      if (t < 0 || blocked.rawin(t) || !GSTile.IsBuildable(t)) break;
+      score += 3;
+    }
+  }
+  if (sp.rawin("Gb")) {
+    local back = (sp.d + 2) % 4, t = sp.Gb[0];
+    for (local k = 0; k < 6; k++) {
+      t = U_Step(t, back);
+      if (t < 0 || blocked.rawin(t) || !GSTile.IsBuildable(t)) break;
+      score += 3;
+    }
+  }
+  local dist = max(1, U_Dist(sp.anchor, other));
+  score += 20 * U_Toward(sp.d, sp.anchor, other) / dist;
+  if (e.kind == "town") score += min(160, GSTile.GetCargoAcceptance(sp.anchor, cargo, sp.w, sp.h, radius)) / 4;
+  return score;
 }
 
 /* One big station: when new platforms are added beside an own station, the
@@ -299,8 +354,10 @@ function BuildRail_FanActions(sp, double, out)
 {
   // back end of a station in the middle of a line (single track)
   if (sp.rawin("Fb")) {
+    out.append({ op = "rail", p = sp.Pe[0], t = sp.Pb[0], n = sp.Fb[0] });
     out.append({ op = "rail", p = sp.Pb[0], t = sp.Fb[0], n = sp.Gb[0] });
     if (sp.plat >= 2) {
+      out.append({ op = "rail", p = sp.Pe[1], t = sp.Pb[1], n = sp.Fb[1] });
       out.append({ op = "rail", p = sp.Pb[1], t = sp.Fb[1], n = sp.Fb[0] });
       out.append({ op = "rail", p = sp.Fb[1], t = sp.Fb[0], n = sp.Gb[0] });
     }
@@ -335,6 +392,7 @@ function BuildRail_FanBackMore(sp, out)
 {
   if (sp.plat <= 2 || !sp.rawin("Fb")) return;
   for (local r = 2; r < sp.plat; r++) {
+    out.append({ op = "rail", p = sp.Pe[r], t = sp.Pb[r], n = sp.Fb[r] });
     out.append({ op = "rail", p = sp.Pb[r], t = sp.Fb[r], n = sp.Fb[r - 1] });
     if (r + 1 < sp.plat) out.append({ op = "rail", p = sp.Fb[r + 1], t = sp.Fb[r], n = sp.Fb[r - 1] });
   }

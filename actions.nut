@@ -1,6 +1,26 @@
 /* Build actions: small tables that can be run, tested (cost estimate)
  * and saved with the game. Each returns true on success. */
 
+/* One track piece. On hills the slope of a tile can change after it was
+ * planned (levelling a neighbour moves the shared corners), so a piece that
+ * does not fit gets its tile levelled - each corner height is tried - and is
+ * laid again (only with landscaping allowed). */
+function Act_Rail(a)
+{
+  if (GSRail.BuildRail(a.p, a.t, a.n) || GSError.GetLastError() == GSError.ERR_ALREADY_BUILT) return true;
+  if (GSError.GetLastError() == GSError.ERR_NOT_ENOUGH_CASH) return false;
+  if (!GSController.GetSetting("allow_terraform")) return false;
+  local t = a.t;
+  if (GSRoad.IsRoadTile(t) || GSRail.IsRailStationTile(t) || GSBridge.IsBridgeTile(t) || GSTunnel.IsTunnelTile(t)) return false;
+  local x = GSMap.GetTileX(t), y = GSMap.GetTileY(t);
+  foreach (c in [[x, y], [x + 1, y], [x, y + 1], [x + 1, y + 1]]) {
+    local start = GSMap.GetTileIndex(c[0], c[1]), end = GSMap.GetTileIndex(2 * x + 1 - c[0], 2 * y + 1 - c[1]);
+    if (!GSTile.LevelTiles(start, end)) continue;
+    if (GSRail.BuildRail(a.p, a.t, a.n) || GSError.GetLastError() == GSError.ERR_ALREADY_BUILT) return true;
+  }
+  return false;
+}
+
 function Act_Run(job, a)
 {
   local op = a.op;
@@ -22,7 +42,7 @@ function Act_Run(job, a)
     if (d >= 0) job.depot_tile = d;
     return d >= 0;
   }
-  if (op == "rail") return GSRail.BuildRail(a.p, a.t, a.n) || GSError.GetLastError() == GSError.ERR_ALREADY_BUILT;
+  if (op == "rail") return Act_Rail(a);
   if (op == "rail_bridge") return a.id >= 0 && GSBridge.BuildBridge(GSVehicle.VT_RAIL, a.id, a.a, a.b);
   if (op == "rail_tunnel") return GSTunnel.BuildTunnel(GSVehicle.VT_RAIL, a.a);
   if (op == "rail_station_join") return GSRail.BuildRailStation(a.tile, GSRail.RAILTRACK_NE_SW, 1, 1, a.station);
@@ -77,12 +97,16 @@ function Act_Estimate(job, actions)
   local acc = GSAccounting();
   job.est_nocash <- 0;
   job.est_fail <- 0;
+  job.est_bad <- [];   // tiles of track pieces that failed the test run
   foreach (a in actions) {
     if (a.op == "rail_depot" || a.op == "rail_depot_end" || a.op == "road_depot" || a.op == "signal" || a.op == "vehicles") continue;
     if (!Act_Run(job, a)) {
       // the test run also checks money: such pieces are missing from the sum
       if (GSError.GetLastError() == GSError.ERR_NOT_ENOUGH_CASH) job.est_nocash++;
-      else job.est_fail++;
+      else {
+        job.est_fail++;
+        if (a.op == "rail") job.est_bad.append(a.t);
+      }
     }
   }
   return acc.GetCosts();
