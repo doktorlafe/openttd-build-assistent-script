@@ -148,8 +148,17 @@ function UI_SetText(self, company, name, text)
   local p = self.pages.rawget(company);
   if (!p.el.rawin(name)) return;
   local id = p.el.rawget(name);
-  if (GSStoryPage.IsValidStoryPageElement(id)) GSStoryPage.UpdateElement(id, 0, U_Clip(text));
+  // every update is a game command: skip it when the text did not change
+  // (the progress line is set after every search step)
+  text = U_Clip(text);
+  if (::g_shown.rawin(id) && ::g_shown.rawget(id) == text) return;
+  if (!GSStoryPage.IsValidStoryPageElement(id)) return;
+  ::g_shown.rawset(id, text);
+  GSStoryPage.UpdateElement(id, 0, text);
 }
+
+/* Text last shown in each Story Book element (not saved). */
+g_shown <- {};
 
 function UI_Status(self, company, text)
 {

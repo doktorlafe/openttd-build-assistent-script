@@ -147,7 +147,8 @@ A station location is searched in this order:
    can use every platform, come in through one throat and leave straight on their own line.
 2. **Flat free land** within 20 tiles of the town centre (or around the industry). The station must cover houses or the industry.
    At an industry the station goes **as far from it as the coverage allows** (and a bit toward the other end), so the land
-   around the industry stays free.
+   around the industry stays free. Of the first places that fit (up to 6), the **best** one is taken: free straight land in
+   front of the exit (the line can leave without a sharp bend), facing the other end and, in towns, covering more houses.
 3. **A slope that gets levelled** (if *allow_terraform* is on). The levelling cost is included in the estimate.
 
 The station exit must be free and the space for the depot behind the platform is kept free.
@@ -163,9 +164,15 @@ The script does not demolish houses, because that would hurt your town rating.
   Steep slopes are levelled too, or avoided when landscaping is off.
 - **Rail:** crossing roads or tracks is possible on the level, but a **bridge over them** (flyover) is always considered too
   and usually wins over crossing your own track on the level. Must not turn on a slope, on a level crossing, or right after a bridge. Two turns in the same direction in a row
-  (a 90° turn) are forbidden. Diagonal stretches are cheap, a sharp bend (straight, one curve piece, straight) is expensive, so bends are smooth where there is room. It may cross your own straight unsignalled track perpendicularly. It does not cross other companies' tracks, but can bridge over them.
+  (a 90° turn) are forbidden. Diagonal track is cheaper per tile than straight track, because a diagonal is the shorter way for a train
+  (idea from the ChooChoo AI); entering and leaving a diagonal costs a little, so the route has long straight and long
+  diagonal runs instead of zigzags. A tile right next to houses, water or an industry costs a little more, so the line keeps
+  some room beside it. A sharp bend (straight, one curve piece, straight) is expensive, so bends are smooth where there is room. It may cross your own straight unsignalled track perpendicularly. It does not cross other companies' tracks, but can bridge over them.
 - **Long routes** are searched in parts: a waypoint is placed every *segment_length* tiles on the straight line between the ends
   and the route is searched part by part. A waypoint in water or in a town is moved to free land, and an unreachable waypoint is skipped.
+
+- **Test run before building:** the whole plan is built once in test mode. If a track piece fails there (and not only
+  because the land is levelled first), the route is planned once more around that tile, so the line has no hole.
 
 ### My tracks: using your existing railway
 Press **My tracks** to switch it on (the *Selection* line then says *uses your tracks*). The route search may then run
