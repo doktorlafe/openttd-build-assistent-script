@@ -32,6 +32,7 @@
 - [ ] **Fail fast**: second track whose station entry is taken fails at once ("the way into the station is taken"); a search that gets within 3 tiles of the goal and no closer for 20k tiles stops; second track stops after 40k tiles without getting closer
 - [ ] **Suggestions page** (step 1): own Story Book page "Build assistant - suggestions", Suggest button lists the 5 best cargo railways (30..150 tiles, sources carried < 100%) with cost, profit/year, trains and payback; check on BENCHMARK-LAFE.scn that the top routes make sense and the Plan cost is close to the estimate
 - [ ] **Suggestions step 2**: travel time at 3/4 top speed + half the full-load wait counts as cargo days ("~N days on the way" on each line, "days (fill F)" in SUG lines); Plan #N button fills A/B (rail), plans and opens the build page
+- [ ] **Ship line step 1** (oil rig -> refinery): A = oil rig, B = refinery, "Ship: plan" finds a dock place within reach of B that the water from the rig reaches (SHIP lines in the debug window), "Ship: build" builds dock + water depot + 1..3 ships with orders (full load at the rig)
 - [ ] **Benchmark switch**: switching "benchmark" on in-game starts it; 4 long routes (~250 tiles) added
 
 ## Known issues

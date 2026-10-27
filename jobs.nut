@@ -777,6 +777,29 @@ function Job_BadTiles(job, levels)
     }
   }
   foreach (t in job.est_bad) if (!skip.rawin(t)) out.append(t);
+  // a tile right next to a bridge or tunnel head must not be levelled: the
+  // levelling moves the corners it shares with the head, and after the head
+  // is built those corners are fixed, so the track piece there cannot be laid
+  // (a hole in front of the bridge). Plan the route again around such tiles.
+  local heads = {};
+  local paths = [job.path1];
+  if (job.rawin("path2") && job.path2 != null) paths.append(job.path2);
+  foreach (path in paths) {
+    for (local j = 0; j < path.kinds.len(); j++) {
+      if (path.kinds[j] == 0) continue;
+      heads.rawset(path.tiles[j], true);                     // far end
+      if (j > 0) heads.rawset(path.tiles[j - 1], true);      // near end
+    }
+  }
+  foreach (a in levels) {
+    foreach (n in U_Neighbours(a.a)) {
+      if (heads.rawin(n)) {
+        U_Log("i", "Tile " + GSMap.GetTileX(a.a) + "," + GSMap.GetTileY(a.a) + " would be levelled right next to a bridge/tunnel head: planning around it.");
+        out.append(a.a);
+        break;
+      }
+    }
+  }
   return out;
 }
 

@@ -2,7 +2,7 @@
  * self = the controller: self.pages[company] = { page, el = { name -> element id }, ver } */
 
 /* Bump when the page layout changes: older pages are then built again. */
-const UI_VERSION = 14;
+const UI_VERSION = 15;
 
 /* Lines kept in the "Log" part of the page. */
 const UI_LOG_LINES = 6;
@@ -71,6 +71,8 @@ function UI_Items()
     ["list_add", GSStoryPage.SPET_BUTTON_TILE, pick2, "+ List"],
     ["list_signs", GSStoryPage.SPET_BUTTON_PUSH, push, "List from signs"],
     ["list_clear", GSStoryPage.SPET_BUTTON_PUSH, stop, "Clear"],
+    ["ship_plan", GSStoryPage.SPET_BUTTON_PUSH, push, "Ship: plan (A = oil rig, B = refinery)"],
+    ["ship_build", GSStoryPage.SPET_BUTTON_PUSH, go, "Ship: build"],
     ["log_title", GSStoryPage.SPET_TEXT, 0, "--- Log (newest first) ---"]
   ];
   for (local i = 0; i < UI_LOG_LINES; i++) items.append(["d" + i, GSStoryPage.SPET_TEXT, 0, "-"]);

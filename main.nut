@@ -13,6 +13,7 @@ require("loop.nut");
 require("vehicles.nut");
 require("ui.nut");
 require("suggest.nut");
+require("ship.nut");
 require("bench.nut");
 
 class LafeBuildAssistant extends GSController {
@@ -29,6 +30,7 @@ class LafeBuildAssistant extends GSController {
   loops = null;   // company -> [loop lines: station + inbound and return track tiles, for branches]
   bench = null;   // benchmark run (setting "benchmark"), not saved
   bench_wait = false;   // benchmark waits for the first company
+  ships = null;         // planned ship line per company (Ship: plan -> Ship: build), not saved
   sugs = null;          // suggestions per company for the Plan buttons, not saved
   bench_on = false;     // last seen value of the "benchmark" setting
   turn = 0;       // round robin over the companies
@@ -323,6 +325,28 @@ function LafeBuildAssistant::OnButton(company, name)
 {
   if (name == "s_go") {
     Sug_Run(this, company);
+    return;
+  }
+  if (name == "ship_plan" || name == "ship_build") {
+    if (this.ships == null) this.ships = {};
+    local mode = GSCompanyMode(company);
+    local text;
+    if (name == "ship_plan") {
+      local pk = UI_Pick(this, company);
+      UI_Status(this, company, "Ship: looking for a dock place and a way over water ...");
+      local plan = Ship_Plan(pk.a, pk.b);
+      if (plan.ok) this.ships.rawset(company, plan);
+      else if (this.ships.rawin(company)) this.ships.rawdelete(company);
+      text = plan.text;
+    } else if (!this.ships.rawin(company)) {
+      text = "Ship: press Ship: plan first.";
+    } else {
+      text = Ship_Build(this.ships.rawget(company));
+      this.ships.rawdelete(company);
+      UI_History(this, company, text);
+    }
+    UI_Status(this, company, text);
+    UI_Diag(this, company, "i", text);
     return;
   }
   if (name.len() > 2 && name.slice(0, 2) == "sp") {
