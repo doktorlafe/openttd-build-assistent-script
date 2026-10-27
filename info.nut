@@ -2,7 +2,7 @@ class LafeBuildAssistant extends GSInfo {
   function GetAuthor()      { return "lafe"; }
   function GetName()        { return "Lafe Build Assistant"; }
   function GetDescription() { return "Builds roads and railways for your company between towns and industries: bridges, tunnels, stations, depots, signals and vehicles. Control it from the Story Book."; }
-  function GetVersion()     { return 3; }
+  function GetVersion()     { return 4; }
   function MinVersionToLoad() { return 1; }   // older savegames (and the benchmark map) load with newer versions
   function GetDate()        { return "2026-10-25"; }
   function CreateInstance() { return "LafeBuildAssistant"; }
