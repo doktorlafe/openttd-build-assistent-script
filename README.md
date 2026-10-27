@@ -283,7 +283,7 @@ They can be changed while the game is running and apply to all companies. In mul
 ### Route search
 | Setting (name in `info.nut`) | Default | Range | What it does |
 |---|---|---|---|
-| Maximum distance between the two ends (`max_distance`) | 500 | 10–2000 | Maximum distance of the ends (and of neighbouring towns in a list) in tiles. |
+| Maximum distance between the two ends (`max_distance`) | 2000 | 10–2000 | Maximum distance of the ends (and of neighbouring towns in a list) in tiles. |
 | Route search limit (`search_limit`) | 500 | 10–5000 | How many thousand tiles the search may examine before giving up. A section to a waypoint gets a quarter, at least 20 thousand. |
 | Route search: tiles examined per step (`search_per_tick`) | 2000 | 100–20000 | Cap of one search batch. The script searches in batches of at most 300 tiles anyway so progress updates often, so the setting only matters below 300. |
 | Long routes: search in parts of N tiles (`segment_length`) | 40 | 0–200 | Waypoint spacing for long routes. 0 = search the whole route at once (very slow for long routes). |

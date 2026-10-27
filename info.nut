@@ -23,7 +23,7 @@ class LafeBuildAssistant extends GSInfo {
   }
 
   function GetSettings() {
-    Num("max_distance", "Maximum distance between the two ends (tiles)", 500, 10, 2000);
+    Num("max_distance", "Maximum distance between the two ends (tiles)", 2000, 10, 2000);
     Num("search_limit", "Route search limit (thousands of tiles examined)", 500, 10, 5000);
     Num("search_per_tick", "Route search: tiles examined per step (higher = faster, more lag)", 2000, 100, 20000);
     Num("segment_length", "Long routes: search in parts of N tiles (0 = one search)", 40, 0, 200);
