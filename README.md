@@ -146,6 +146,11 @@ The page **Build assistant - suggestions** has its own controls:
   - **PLAN ONLY**: the same, but it only writes what it would build ("WOULD BUILD ...") and spends nothing.
   - When nothing can be built (no money, no paying route) it waits *ap_interval* months (default 1) and tries again.
   - It never touches a job you started yourself; while one runs it waits. The mode is saved with the game.
+  - **Plan time limit**: a plan that is not ready within *ap_plan_timeout* real seconds (default 50) is given up and
+    the next suggestion is planned.
+  - **Watchdog**: when nothing new happens for *ap_watchdog* real minutes (default 30), it moves on by itself: its own
+    job that is stuck is cancelled (one paused for lack of money is resumed first), and a wait for the next round ends
+    early. A job you started yourself is never touched.
   - On a server the setting *ap_allowed* switches the autopilot off for every company.
   - Every decision goes to the history lines under the button, the Log and the script debug window (lines `AP`).
 

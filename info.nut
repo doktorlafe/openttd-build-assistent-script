@@ -55,6 +55,8 @@ class LafeBuildAssistant extends GSInfo {
     Flag("ap_allowed", "Autopilot: companies may switch it on (suggestions page)", 1);
     Num("ap_budget_percent", "Autopilot: one route may cost at most this % of the bank balance", 50, 5, 100);
     Num("ap_interval", "Autopilot: months to wait when nothing could be built (no money, no paying route)", 1, 1, 24);
+    Num("ap_plan_timeout", "Autopilot: real seconds a plan may take before it tries the next suggestion (0 = no limit)", 50, 0, 600);
+    Num("ap_watchdog", "Autopilot: real minutes without anything new before it moves on by itself (0 = never)", 30, 0, 240);
     Num("cost_limit_percent", "One build may cost at most this % of the bank balance", 100, 1, 100);
   }
 }

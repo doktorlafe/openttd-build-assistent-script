@@ -12,12 +12,28 @@
  *      would build, nothing is spent
  *   5. BUILD: next round at once; PLAN ONLY: wait ap_interval months
  * A source it has built from is not suggested to it again.
- * One job at a time; a job the player started is never touched. */
+ * One job at a time; a job the player started is never touched.
+ * Plan time limit: a plan of its own not ready within ap_plan_timeout real
+ * seconds (default 50) is given up and the next suggestion is planned.
+ * Watchdog: when nothing new happens for ap_watchdog real minutes (default
+ * 30), it moves on by itself: its own job that is stuck is cancelled (one
+ * paused for money is resumed first), and a wait for the next round ends. */
 
 const AP_OFF = 0;
 const AP_PLAN = 1;
 const AP_BUILD = 2;
 const AP_HIST = 3;
+
+/* Real time in seconds (the server's clock). Falls back to game ticks
+ * (27 ms each at normal speed) where the clock is not available. */
+function Ap_Now()
+{
+  try {
+    return GSDate.GetSystemTime();
+  } catch (e) {
+    return GSController.GetTick() * 27 / 1000;
+  }
+}
 
 function Ap_Items()
 {
@@ -39,7 +55,7 @@ function Ap_ModeName(m)
 function Ap_State(self, company)
 {
   if (self.ap == null) self.ap = {};
-  if (!self.ap.rawin(company)) self.ap.rawset(company, { mode = AP_OFF, next = 0, cands = [], i = 0, budget = 0, hist = [], done = {} });
+  if (!self.ap.rawin(company)) self.ap.rawset(company, { mode = AP_OFF, next = 0, cands = [], i = 0, budget = 0, hist = [], done = {}, seen = Ap_Now(), mark = "" });
   return self.ap.rawget(company);
 }
 
@@ -52,6 +68,7 @@ function Ap_Date(d)
 function Ap_Say(self, company, text)
 {
   local st = Ap_State(self, company);
+  st.seen = Ap_Now();   // something new: the watchdog starts again
   UI_SetText(self, company, "a_state", U_Clip("Autopilot " + Ap_ModeName(st.mode) + ": " + text));
   U_Log("i", U_Clip("AP [" + company + "] " + text));
 }
@@ -80,6 +97,7 @@ function Ap_Toggle(self, company)
   st.cands = [];
   st.i = 0;
   st.next = GSDate.GetCurrentDate();   // first round right away
+  st.seen = Ap_Now();
   Ap_Say(self, company, st.mode == AP_OFF ? "off." : (st.mode == AP_BUILD ? "on, builds route after route until you switch it off." : "on, only reports what it would build."));
 }
 
@@ -96,6 +114,7 @@ function Ap_Tick(self)
       continue;
     }
     if (GSCompany.ResolveCompanyID(company) == GSCompany.COMPANY_INVALID) continue;
+    if (Ap_Watchdog(self, company, st)) continue;
     // busy: a job (own or the player's) or a town list is running
     if (self.jobs.rawin(company)) continue;
     if (self.queue.rawin(company) && self.queue.rawget(company).len() > 0) continue;
@@ -107,6 +126,48 @@ function Ap_Tick(self)
     if (now < st.next) continue;
     Ap_Round(self, company, st, now);
   }
+}
+
+/* Plan time limit and watchdog. Returns true when it acted. */
+function Ap_Watchdog(self, company, st)
+{
+  local job = self.jobs.rawin(company) ? self.jobs.rawget(company) : null;
+  local own = job != null && job.rawin("ap");
+  // a plan of its own that takes too long: give it up, plan the next one
+  local secs = GSController.GetSetting("ap_plan_timeout");
+  if (own && secs > 0 && (job.state == "PREP" || job.state == "SEARCH" || job.state == "SEARCH2") &&
+      Ap_Now() - job.ap.t0 > secs) {
+    Ap_Note(self, company, "skipped " + job.names + ": no plan within " + secs + " s, trying the next one.");
+    Job_Drop(self, job);
+    if (st.i >= st.cands.len()) Ap_Say(self, company, "nothing could be planned in time this round. Next check " + Ap_Date(st.next) + ".");
+    return true;
+  }
+  // progress of its own job counts as something new
+  if (own) {
+    local mark = job.state + ":" + job.idx + ":" + Job_Examined(job);
+    if (mark != st.mark) { st.mark = mark; st.seen = Ap_Now(); }
+  }
+  local mins = GSController.GetSetting("ap_watchdog");
+  if (mins <= 0 || Ap_Now() - st.seen < mins * 60) return false;
+  if (job != null) {
+    if (!own) { st.seen = Ap_Now(); return false; }   // the player's job: wait, never touch it
+    if (job.state == "PAUSED") {
+      Ap_Note(self, company, "nothing new for " + mins + " min, resuming " + job.names + ".");
+      job.state = "BUILD";
+    } else {
+      Ap_Note(self, company, "nothing new for " + mins + " min, " + job.names + " is stuck in " + job.state + ": cancelled, going on.");
+      Job_Drop(self, job);
+    }
+    st.seen = Ap_Now();
+    return true;
+  }
+  // only waiting for the next round: start it now
+  if (st.i >= st.cands.len() && GSDate.GetCurrentDate() < st.next) {
+    Ap_Note(self, company, "nothing new for " + mins + " min, checking again now instead of " + Ap_Date(st.next) + ".");
+    st.next = GSDate.GetCurrentDate();
+  }
+  st.seen = Ap_Now();
+  return false;
 }
 
 /* A new round: suggestions within the budget, best first. */
@@ -147,7 +208,7 @@ function Ap_PlanNext(self, company, st)
   if (!GSIndustry.IsValidIndustry(s.src) || !GSIndustry.IsValidIndustry(s.dst)) return;
   local job = Job_New(company, MODE_RAIL, { kind = "industry", id = s.src }, { kind = "industry", id = s.dst });
   job.reuse <- false;
-  job.ap <- { est = s.cost, budget = st.budget, n = st.i, of = st.cands.len() };
+  job.ap <- { est = s.cost, budget = st.budget, n = st.i, of = st.cands.len(), t0 = Ap_Now() };
   job.names = "[autopilot] " + job.names;
   self.jobs.rawset(company, job);
   Ap_Say(self, company, "planning " + st.i + "/" + st.cands.len() + ": " + GSIndustry.GetName(s.src) + " -> " +
