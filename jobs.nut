@@ -624,10 +624,8 @@ function Job_Plan(self, job)
                          " more platform(s), linked " + (x == 2 ? "both ways" : "one way") + " with the old ones: one big station.");
     }
     // landscaping first, then bridges/tunnels, then the track
-    local nl = PathRail_LevelActions(job.path1, sa.F[0], job.goal_front, levels);
-    if (dbl) nl += PathRail_LevelActions(job.path2, p2a, p2b, levels);
-    if (nl > 0) UI_Diag(self, job.company, "i", job.names + ": " + nl + " tile(s) of the route will be levelled (landscaping).");
-    foreach (a in levels) acts.append(a);
+    // the land under the track is not levelled (only under stations): the
+    // route only uses tiles where the track fits the land as it is
     PathRail_Actions(job.path1, sa.F[0], job.goal_front, specials, pieces);
     if (dbl) {
       paths.append(job.path2);
@@ -932,7 +930,19 @@ function Job_Verify(self, job)
     if (GSRail.AreTilesConnected(a.p, a.t, a.n)) continue;
     missing++;
     if (Act_Rail(a) && GSRail.AreTilesConnected(a.p, a.t, a.n)) fixed++;
-    else if (where < 0) where = a.t;
+    else {
+      if (where < 0) where = a.t;
+      // a sign on the map at every hole (up to 10), so it can be found and
+      // fixed by hand even when the Log has scrolled on
+      if (missing - fixed <= 10) {
+        local why = GSError.GetLastErrorString();
+        // sign texts are at most 31 characters
+        local sign = "HOLE " + why;
+        if (sign.len() > 31) sign = sign.slice(0, 31);
+        GSSign.BuildSign(a.t, sign);
+        U_Log("w", U_Clip(job.names + ": hole in the track at " + GSMap.GetTileX(a.t) + "," + GSMap.GetTileY(a.t) + " (" + why + ")"));
+      }
+    }
   }
   if (missing == 0) {
     U_Log("i", job.names + ": check after building: all track pieces connected.");

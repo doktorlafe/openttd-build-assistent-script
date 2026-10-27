@@ -112,6 +112,25 @@ function U_Corner(t)
   return GSMap.GetTileIndex(GSMap.GetTileX(t) + 1, GSMap.GetTileY(t) + 1);
 }
 
+/* Levelling tile t to the height of its edge towards the neighbour tile
+ * `from`: [start, end] corner points for GSTile.LevelTiles (the start point
+ * lies on that edge, the end point is the opposite corner of t). The order
+ * puts the higher of the two edge corners first. null if not neighbours. */
+function U_EdgeCorners(t, from)
+{
+  if (from < 0 || GSMap.DistanceManhattan(t, from) != 1) return null;
+  local x = GSMap.GetTileX(t), y = GSMap.GetTileY(t);
+  local fx = GSMap.GetTileX(from), fy = GSMap.GetTileY(from);
+  local pts;
+  if (fx < x) pts = [[x, y], [x, y + 1]];
+  else if (fx > x) pts = [[x + 1, y], [x + 1, y + 1]];
+  else if (fy < y) pts = [[x, y], [x + 1, y]];
+  else pts = [[x, y + 1], [x + 1, y + 1]];
+  local a = GSMap.GetTileIndex(pts[0][0], pts[0][1]), b = GSMap.GetTileIndex(pts[1][0], pts[1][1]);
+  local s = GSTile.GetCornerHeight(b, GSTile.CORNER_N) > GSTile.GetCornerHeight(a, GSTile.CORNER_N) ? pts[1] : pts[0];
+  return [GSMap.GetTileIndex(s[0], s[1]), GSMap.GetTileIndex(2 * x + 1 - s[0], 2 * y + 1 - s[1])];
+}
+
 /* Can tile t be levelled (test mode)? */
 function U_CanLevel(t)
 {

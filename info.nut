@@ -39,7 +39,7 @@ class LafeBuildAssistant extends GSInfo {
     Num("veh_loop", "Vehicles: buses bought for a town bus loop (0 = none)", 1, 0, 10);
     Num("loop_stops", "Town bus loop: number of bus stops", 5, 2, 8);
     Num("loop_gap", "Town bus loop: minimum distance between the stops (tiles)", 4, 2, 10);
-    Flag("allow_terraform", "Landscaping: level land for stations, curves on slopes and steep slopes on the route", 1);
+    Flag("allow_terraform", "Landscaping: level the land under stations (the land under the track is never levelled)", 1);
     Num("rail_station_length", "Rail station length (tiles)", 4, 2, 10);
     Num("rail_platforms", "Double rail station platforms (big station: later lines join the free platforms; single track uses at most 2)", 4, 2, 8);
     Flag("loop_station", "Double rail: loop at the destination (trains run through the station and turn back onto the return track, no reversing); a normal end station where there is no room", 1);

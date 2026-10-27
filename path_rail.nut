@@ -26,7 +26,8 @@ function PathRail_Cost(job, t)
     local slope = GSTile.GetSlope(t);
     if (slope == GSTile.SLOPE_FLAT) c = 5;
     else if (!GSTile.IsSteepSlope(slope)) c = 6;
-    else if (job.terra && PathRail_CanLevel(job, t)) c = 7;   // levelled before the track is laid
+    // steep slopes: no track (the land under the track is never levelled:
+    // levelling one tile moved the corners of its neighbours and left holes)
     if (c >= 0) {
       local around = PathRail_Around(job, t);
       // keep a little room beside the line: right next to houses, water and
@@ -133,9 +134,10 @@ function PathRail_CanLevel(job, t)
   return ok;
 }
 
-/* A curve on a sloped tile from prev to next: extra cost, or -1. Foundation
- * first (1), levelling the tile when landscaping is allowed (2). Kept small,
- * so hills do not slow the search down. Cached. */
+/* Track on a sloped tile from prev to next: extra cost, or -1. Only where
+ * the piece can be laid as the land is (with a foundation), like the
+ * Pathfinder.Rail library does: the land under the track is never levelled.
+ * Cached. */
 function PathRail_SlopeCurve(job, prev, tile, next, dir, i)
 {
   local key = (tile * 4 + dir) * 4 + i;
@@ -145,7 +147,6 @@ function PathRail_SlopeCurve(job, prev, tile, next, dir, i)
     local tm = GSTestMode();
     if (GSRail.BuildRail(prev, tile, next)) r = 1;
   }
-  if (r < 0 && job.terra && PathRail_CanLevel(job, tile)) r = 2;
   job.sc.rawset(key, r);
   return r;
 }
@@ -171,7 +172,13 @@ function PathRail_LevelActions(path, first, last, out)
       ok = GSRail.BuildRail(full[j - 1], x, full[j + 1]) || GSError.GetLastError() == GSError.ERR_ALREADY_BUILT;
     }
     if (ok) continue;
-    out.append({ op = "level", a = x, b = U_Corner(x) });
+    // level to the height of the edge the track comes in over: a row of
+    // levelled tiles then ends up at one height, and a tile levelled later
+    // does not tilt the one before it again (each tile levelled to its own
+    // north corner broke its neighbours on steep hills: holes in the track)
+    local c = U_EdgeCorners(x, full[j - 1]);
+    if (c != null) out.append({ op = "level", a = c[0], b = c[1] });
+    else out.append({ op = "level", a = x, b = U_Corner(x) });
     n++;
   }
   return n;
@@ -295,7 +302,7 @@ function PathRail_Nb(job, cur, kind)
     }
     local n = U_Step(tile, i);
     if (n < 0) continue;
-    if (sloped && turn != 0) {
+    if (sloped) {   // straight or curve: the piece must fit the slope as it is
       local sc = PathRail_SlopeCurve(job, back, tile, n, dir, i);
       if (sc < 0) continue;
       extra += sc;

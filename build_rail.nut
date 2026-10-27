@@ -127,6 +127,30 @@ function BuildRail_ExitOk(t, d, blocked)
   return true;
 }
 
+/* Tiles of a station layout that must lie flat at one height: platforms,
+ * switch tiles (F, Fb), the tiles where the line leaves (G, Gb) and the depot
+ * behind platform 0 (if that tile is free). A switch or a depot cannot stand
+ * on a slope, and a tile at another height leaves a step: the track does not
+ * connect. */
+function BuildRail_FlatTiles(sp)
+{
+  local out = clone sp.tiles;
+  if (sp.rawin("dep") && sp.dep >= 0 && GSTile.IsBuildable(sp.dep)) out.append(sp.dep);
+  return out;
+}
+
+function BuildRail_AllFlat(sp)
+{
+  local h = -1;
+  foreach (t in BuildRail_FlatTiles(sp)) {
+    if (GSTile.GetSlope(t) != GSTile.SLOPE_FLAT) return false;
+    local th = GSTile.GetMinHeight(t);
+    if (h < 0) h = th;
+    else if (th != h) return false;
+  }
+  return true;
+}
+
 /* Checks one station layout. level = may level the land first.
  * Sets sp.level (and sp.la / sp.lb) and returns true when it can be built. */
 function BuildRail_Check(e, role, cargo, sp, blocked, radius, level)
@@ -156,15 +180,18 @@ function BuildRail_Check(e, role, cargo, sp, blocked, radius, level)
   local tm = GSTestMode();
   local fits = GSRail.BuildRailStation(sp.anchor, sp.axis, sp.plat, sp.len, GSStation.STATION_JOIN_ADJACENT);
   if (!fits) U_NoCash();
+  // without levelling only on land that is flat at one height under the whole
+  // layout (the station alone may fit on a slope, its switches and depot not)
+  local flat = fits && BuildRail_AllFlat(sp);
   if (!level) {
-    if (!fits) return false;
+    if (!flat) return false;
     sp.level <- false;
     return true;
   }
-  if (fits) return false;   // would have been found without levelling
-  // level the whole station area including the switch tiles
+  if (flat) return false;   // would have been found without levelling
+  // level the whole area at once: platforms, switch tiles, exits and depot
   local minx = 100000, miny = 100000, maxx = 0, maxy = 0;
-  foreach (t in sp.tiles) {
+  foreach (t in BuildRail_FlatTiles(sp)) {
     minx = min(minx, GSMap.GetTileX(t)); maxx = max(maxx, GSMap.GetTileX(t));
     miny = min(miny, GSMap.GetTileY(t)); maxy = max(maxy, GSMap.GetTileY(t));
   }

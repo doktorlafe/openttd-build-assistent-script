@@ -160,8 +160,10 @@ The script does not demolish houses, because that would hurt your town rating.
 - **Rail, following your lines:** a tile right beside one of your tracks is cheaper (*follow_lines*), so a new line runs
   alongside your existing ones, copies their line and takes the same way around hills, water and towns: tidy corridors
   instead of new tracks across open land.
-- **Rail, slopes:** a curve on a slope is built on a foundation where possible, otherwise the tile is levelled (*allow_terraform*).
-  Steep slopes are levelled too, or avoided when landscaping is off.
+- **Rail, slopes:** the land under the track is never levelled. The route only uses sloped tiles where the track piece fits
+  as the land is (on a foundation), and goes around steep slopes or over them with a bridge or tunnel. (Levelling single
+  tiles along the track moved the corners of their neighbours and left holes in the line; other AIs such as those using the
+  Pathfinder.Rail library work the same way.)
 - **Rail:** crossing roads or tracks is possible on the level, but a **bridge over them** (flyover) is always considered too
   and usually wins over crossing your own track on the level. Must not turn on a slope, on a level crossing, or right after a bridge. Two turns in the same direction in a row
   (a 90° turn) are forbidden. Diagonal track is cheaper per tile than straight track, because a diagonal is the shorter way for a train
@@ -171,8 +173,7 @@ The script does not demolish houses, because that would hurt your town rating.
 - **Long routes** are searched in parts: a waypoint is placed every *segment_length* tiles on the straight line between the ends
   and the route is searched part by part. A waypoint in water or in a town is moved to free land, and an unreachable waypoint is skipped.
 
-- **Test run before building:** the whole plan is built once in test mode. If a track piece fails there (and not only
-  because the land is levelled first), the route is planned once more around that tile, so the line has no hole.
+- **Test run before building:** the whole plan is built once in test mode. If a track piece fails there , the route is planned once more around that tile, so the line has no hole.
 
 ### My tracks: using your existing railway
 Press **My tracks** to switch it on (the *Selection* line then says *uses your tracks*). The route search may then run
@@ -303,7 +304,7 @@ They can be changed while the game is running and apply to all companies. In mul
 ### Railway
 | Setting | Default | Range | What it does |
 |---|---|---|---|
-| Landscaping (`allow_terraform`) | yes | | Level land: under stations when no flat place is found, for curves on slopes where a foundation does not fit, and on steep slopes of the route (track cannot lie on them). The levelling is in the cost estimate. |
+| Landscaping (`allow_terraform`) | yes | | Level land under stations when no flat place is found. The levelling is in the cost estimate. The land under the track is never levelled. |
 | Rail station length (`rail_station_length`) | 4 | 2–10 | Platform length in tiles; determines train length. |
 | Double rail: loop station (`loop_station`) | on | | The destination gets a through station: trains enter at the front, use any platform, leave at the back and the return track turns around the station and runs right beside the incoming track (one-way traffic, no reversing). The source gets a small 2-platform station. Where there is no room, a normal end station is built. A later double line to the same destination becomes a branch: only the small station at its source is built, its track joins your inbound track and its return track leaves your return track. |
 | Double rail station platforms (`rail_platforms`) | 4 | 2–8 | Big stations for double track: rows 0 and 1 get the line, the other platforms are linked to them and wait for later lines to join. Single track uses at most 2 platforms (enough for two trains to pass). If the big station fits nowhere, a smaller one is built. Through stations of a town list have 2. |

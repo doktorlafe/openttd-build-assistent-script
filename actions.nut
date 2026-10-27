@@ -1,23 +1,13 @@
 /* Build actions: small tables that can be run, tested (cost estimate)
  * and saved with the game. Each returns true on success. */
 
-/* One track piece. On hills the slope of a tile can change after it was
- * planned (levelling a neighbour moves the shared corners), so a piece that
- * does not fit gets its tile levelled - each corner height is tried - and is
- * laid again (only with landscaping allowed). */
+/* One track piece. The land under it is never levelled (that moved the
+ * corners of the neighbour tiles and left holes in the track). */
 function Act_Rail(a)
 {
   if (GSRail.BuildRail(a.p, a.t, a.n) || GSError.GetLastError() == GSError.ERR_ALREADY_BUILT) return true;
-  if (GSError.GetLastError() == GSError.ERR_NOT_ENOUGH_CASH) return false;
-  if (!GSController.GetSetting("allow_terraform")) return false;
-  local t = a.t;
-  if (GSRoad.IsRoadTile(t) || GSRail.IsRailStationTile(t) || GSBridge.IsBridgeTile(t) || GSTunnel.IsTunnelTile(t)) return false;
-  local x = GSMap.GetTileX(t), y = GSMap.GetTileY(t);
-  foreach (c in [[x, y], [x + 1, y], [x, y + 1], [x + 1, y + 1]]) {
-    local start = GSMap.GetTileIndex(c[0], c[1]), end = GSMap.GetTileIndex(2 * x + 1 - c[0], 2 * y + 1 - c[1]);
-    if (!GSTile.LevelTiles(start, end)) continue;
-    if (GSRail.BuildRail(a.p, a.t, a.n) || GSError.GetLastError() == GSError.ERR_ALREADY_BUILT) return true;
-  }
+  if (GSError.GetLastError() != GSError.ERR_NOT_ENOUGH_CASH)
+    U_Log("w", "Track piece at " + GSMap.GetTileX(a.t) + "," + GSMap.GetTileY(a.t) + " failed: " + GSError.GetLastErrorString());
   return false;
 }
 
