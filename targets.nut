@@ -90,8 +90,35 @@ function Tg_SpotOk(e, role, cargo, tile, w, h, radius)
 {
   // a transfer hub: the place must be part of that station
   if (e.kind == "station") return GSRail.IsRailStationTile(tile) && GSStation.GetStationID(tile) == e.id;
-  if (e.kind == "industry" && role == "from") return GSTile.GetCargoProduction(tile, cargo, w, h, radius) > 0;
+  if (e.kind == "industry") {
+    // the station must reach THIS industry: a station tile must lie where the
+    // game lets a station take from / deliver to it (another industry of the
+    // same cargo nearby does not count)
+    local reach = Tg_IndustryReach(e.id, role, radius);
+    local x0 = GSMap.GetTileX(tile), y0 = GSMap.GetTileY(tile), hit = false;
+    for (local dx = 0; dx < w && !hit; dx++) {
+      for (local dy = 0; dy < h && !hit; dy++) {
+        if (reach.rawin(GSMap.GetTileIndex(x0 + dx, y0 + dy))) hit = true;
+      }
+    }
+    if (!hit) return false;
+    if (role == "from") return true;
+  }
   return GSTile.GetCargoAcceptance(tile, cargo, w, h, radius) >= 8;
+}
+
+/* Tiles from which a station with this catchment radius serves the industry
+ * (takes its cargo or delivers to it). Cached: industries do not change shape. */
+g_reach <- {};
+function Tg_IndustryReach(id, role, radius)
+{
+  local key = id + ":" + GSIndustry.GetLocation(id) + ":" + role + ":" + radius;
+  if (::g_reach.rawin(key)) return ::g_reach.rawget(key);
+  local list = role == "from" ? GSTileList_IndustryProducing(id, radius) : GSTileList_IndustryAccepting(id, radius);
+  local set = {};
+  for (local t = list.Begin(); !list.IsEnd(); t = list.Next()) set.rawset(t, true);
+  ::g_reach.rawset(key, set);
+  return set;
 }
 
 /* Transfer hub for cargo from a to b (Transfer on): the own station nearest

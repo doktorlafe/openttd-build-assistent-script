@@ -2,7 +2,7 @@
  * self = the controller: self.pages[company] = { page, el = { name -> element id }, ver } */
 
 /* Bump when the page layout changes: older pages are then built again. */
-const UI_VERSION = 11;
+const UI_VERSION = 14;
 
 /* Lines kept in the "Log" part of the page. */
 const UI_LOG_LINES = 6;
@@ -92,6 +92,7 @@ function UI_Ensure(self, company)
       // a page from an older version: build it again in the current layout
       GSStoryPage.Remove(p.page);
     }
+    if (p.rawin("spage") && GSStoryPage.IsValidStoryPage(p.spage)) GSStoryPage.Remove(p.spage);
     if (p.rawin("dpage") && GSStoryPage.IsValidStoryPage(p.dpage)) GSStoryPage.Remove(p.dpage);
     if (p.rawin("hpage") && GSStoryPage.IsValidStoryPage(p.hpage)) GSStoryPage.Remove(p.hpage);
     self.pages.rawdelete(company);
@@ -107,6 +108,15 @@ function UI_Ensure(self, company)
   foreach (it in UI_Items()) {
     local id = GSStoryPage.NewElement(page, it[1], it[2], U_Clip(it[3]));
     if (id != GSStoryPage.STORY_PAGE_ELEMENT_INVALID) p.el.rawset(it[0], id);
+  }
+  // suggestions page: its element names start with s, so they share the el table
+  local spage = GSStoryPage.New(company, "Build assistant - suggestions");
+  if (spage != GSStoryPage.STORY_PAGE_INVALID) {
+    p.spage <- spage;
+    foreach (it in Sug_Items()) {
+      local id = GSStoryPage.NewElement(spage, it[1], it[2], U_Clip(it[3]));
+      if (id != GSStoryPage.STORY_PAGE_ELEMENT_INVALID) p.el.rawset(it[0], id);
+    }
   }
   // debug page: its element names start with x, so they share the el table
   local dpage = GSStoryPage.New(company, "Build assistant - debug");

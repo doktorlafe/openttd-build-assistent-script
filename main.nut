@@ -12,6 +12,7 @@ require("advice.nut");
 require("loop.nut");
 require("vehicles.nut");
 require("ui.nut");
+require("suggest.nut");
 require("bench.nut");
 
 class LafeBuildAssistant extends GSController {
@@ -28,6 +29,7 @@ class LafeBuildAssistant extends GSController {
   loops = null;   // company -> [loop lines: station + inbound and return track tiles, for branches]
   bench = null;   // benchmark run (setting "benchmark"), not saved
   bench_wait = false;   // benchmark waits for the first company
+  sugs = null;          // suggestions per company for the Plan buttons, not saved
   bench_on = false;     // last seen value of the "benchmark" setting
   turn = 0;       // round robin over the companies
 
@@ -319,6 +321,14 @@ function LafeBuildAssistant::PlanList(company, p)
 
 function LafeBuildAssistant::OnButton(company, name)
 {
+  if (name == "s_go") {
+    Sug_Run(this, company);
+    return;
+  }
+  if (name.len() > 2 && name.slice(0, 2) == "sp") {
+    Sug_Plan(this, company, name.slice(2).tointeger());
+    return;
+  }
   local p = UI_Pick(this, company);
   local job = this.jobs.rawin(company) ? this.jobs.rawget(company) : null;
 
