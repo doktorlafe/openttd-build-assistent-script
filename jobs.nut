@@ -93,6 +93,7 @@ function Job_BeginSearch(job, start_key)
   job.seg_start <- start_key;
   job.t0 <- GSController.GetTick();   // for the time estimate in the Story Book
   job.exam0 <- Job_Examined(job);     // for the search speed in the status line
+  job.goal_dead <- false;             // set by Job_StartSecondTrack
   Job_NewAStar(job, start_key);
 }
 
@@ -129,6 +130,13 @@ function Job_NewAStar(job, key)
     job.astar <- AStar(job, [key], PathRail_Nb, PathRail_Goal, PathRail_H, limit);
   // no step closer to the goal for a long time: it is boxed in, stop early
   job.astar.stall = max(30000, limit / 3);
+  // the second track runs right beside the first one: when it gets no closer
+  // for a while, it is boxed in
+  if (job.rawin("near") && job.near.len() > 0) job.astar.stall = min(job.astar.stall, 40000);
+  // a few tiles from the goal and no closer for a long time: the way in is
+  // shut (the search would otherwise examine the whole area around the goal)
+  job.astar.near_h = 3 * Job_HW(job);
+  job.astar.near_stall = 20000;
   if (job.rawin("live_at")) job.live_at = -15000;
 }
 
@@ -259,6 +267,7 @@ function Job_LiveClear(job)
 function Job_Why(job)
 {
   local a = job.astar;
+  if (job.rawin("goal_dead") && job.goal_dead) return "the way into the station is taken";
   if (a.stalled) return "stuck, no way closer than " + (a.best_h / max(1, Job_HW(job))) + " tiles to the goal";
   if (a.examined > a.limit) return "search limit reached";
   return "no way through";
@@ -442,6 +451,14 @@ function Job_Prep(self, job)
     }
     job.approach <- [];
     job.lane <- [];
+    // double track: keep the tiles in front of the second track's platform free
+    // during the first search, so the first track cannot turn across them and
+    // shut the second one out (freed again in Job_StartSecondTrack)
+    if (job.mode == MODE_DOUBLE) {
+      if (sa.plat >= 2) Job_KeepEntry(job, sa.G[1], sa.d);
+      local loop_b = job.rawin("loop") && job.loop && !job.rawin("branch");
+      if (last && !loop_b && sb.plat >= 2) Job_KeepEntry(job, sb.G[1 - r1], sb.d);
+    }
     if (last) {
       job.goal_tile = sb.G[r1];
       job.goal_dir = (sb.d + 2) % 4;
@@ -457,6 +474,19 @@ function Job_Prep(self, job)
   }
   job.state = "SEARCH";
   return null;
+}
+
+/* Blocks tile t and the 2 tiles straight out from it (direction d) and puts
+ * them in job.lane, which is freed when the second track is searched. */
+function Job_KeepEntry(job, t, d)
+{
+  for (local i = 0; i < 3 && t >= 0; i++) {
+    if (!job.blocked.rawin(t)) {
+      job.blocked.rawset(t, true);
+      job.lane.append(t);
+    }
+    t = U_Step(t, d);
+  }
 }
 
 /* Loop station: the first track ends with a straight run in front of the
@@ -539,6 +569,9 @@ function Job_StartSecondTrack(job)
     job.wp = job.wps[0];
     Job_NewAStar(job, job.seg_start);
   }
+  // nothing can reach the end of the second track (the tile in front of it
+  // is taken): fail at once instead of searching the whole area around it
+  job.goal_dead = !PathRail_GoalReachable(job);
   job.state = "SEARCH2";
 }
 
@@ -556,7 +589,12 @@ function Job_Plan(self, job)
     local sa = job.spA, sb = job.spB, dbl = job.mode == MODE_DOUBLE;
     local loop = dbl && job.rawin("loop") && job.loop;
     // second track ends: normally A row 1 <- B row (1 - r1); loop: B back end -> A row 1
-    local p2a = loop ? sb.Fb[0] : sa.F[1], p2b = loop ? sa.F[1] : sb.F[1 - job.r1];
+    // (single track: a free row of an old station has only one platform, so no F[1])
+    local p2a = -1, p2b = -1;
+    if (dbl) {
+      p2a = loop ? sb.Fb[0] : sa.F[1];
+      p2b = loop ? sa.F[1] : sb.F[1 - job.r1];
+    }
     // stations: both ends, or for a town list every station at once in leg 0
     local build = [];
     if (job.build_all) foreach (sp in job.chain.plan) build.append(sp);
@@ -1008,7 +1046,7 @@ function Job_Step(self, job)
 
   if (job.state == "SEARCH" || job.state == "SEARCH2") {
     // small chunks, so the progress in the Story Book moves often
-    local r = job.astar.Step(GSController.GetSetting("search_per_tick"));
+    local r = job.goal_dead ? -1 : job.astar.Step(GSController.GetSetting("search_per_tick"));
     local segs = job.wps.len() + 1;
     if (r == 0) {
       if (true) {
@@ -1030,7 +1068,7 @@ function Job_Step(self, job)
       return;
     }
     if (r < 0) {
-      if (Job_SegFailed(job)) return;   // waypoint skipped, trying again
+      if (!job.goal_dead && Job_SegFailed(job)) return;   // waypoint skipped, trying again
       if (job.state == "SEARCH2" && job.rawin("loop") && job.loop) {
         job.loop = false;
         UI_Diag(self, job.company, "i", job.names + ": no room for the loop at " + Tg_Name(job.link.to) + " (" + Job_Why(job) + "), the return track starts at the station front instead.");

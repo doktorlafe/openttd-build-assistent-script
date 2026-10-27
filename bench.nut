@@ -27,6 +27,23 @@ function Bench_Routes(max_dist)
     out.append({ mode = n == 0 ? MODE_DOUBLE : MODE_RAIL, a = { kind = "town", id = t }, b = { kind = "town", id = best }, label = "town" });
     n++;
   }
+  // long routes: the 4 biggest towns, each paired with the town closest to
+  // 250 tiles away (at least 150, at most max_dist), double track
+  n = 0;
+  for (local t = towns.Begin(); !towns.IsEnd() && n < 4; t = towns.Next()) {
+    local loc = GSTown.GetLocation(t), best = -1, best_off = 100000;
+    local all = GSTownList();
+    for (local o = all.Begin(); !all.IsEnd(); o = all.Next()) {
+      if (o == t) continue;
+      local d = GSMap.DistanceManhattan(loc, GSTown.GetLocation(o));
+      if (d < 150 || d > max_dist) continue;
+      local off = d > 250 ? d - 250 : 250 - d;
+      if (off < best_off) { best = o; best_off = off; }
+    }
+    if (best < 0) continue;
+    out.append({ mode = MODE_DOUBLE, a = { kind = "town", id = t }, b = { kind = "town", id = best }, label = "long" });
+    n++;
+  }
   // industries: the first 4 (by id) that produce a cargo another industry
   // 20..max_dist away accepts
   local inds = GSIndustryList();
@@ -92,7 +109,7 @@ function Bench_Tick(self)
   job.auto <- true;
   job.bench <- b.i;
   job.bench_t0 <- GSController.GetTick();
-  job.names = "[bench " + b.i + "/" + b.list.len() + "] " + job.names;
+  job.names = "[bench " + b.i + "/" + b.list.len() + " " + r.label + "] " + job.names;
   self.jobs.rawset(b.company, job);
 }
 

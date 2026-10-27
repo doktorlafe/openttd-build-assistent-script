@@ -28,6 +28,7 @@ class LafeBuildAssistant extends GSController {
   loops = null;   // company -> [loop lines: station + inbound and return track tiles, for branches]
   bench = null;   // benchmark run (setting "benchmark"), not saved
   bench_wait = false;   // benchmark waits for the first company
+  bench_on = false;     // last seen value of the "benchmark" setting
   turn = 0;       // round robin over the companies
 
   constructor() {
@@ -95,9 +96,11 @@ function LafeBuildAssistant::Start()
     local c = GSCompany.ResolveCompanyID(i);
     if (c != GSCompany.COMPANY_INVALID) UI_Ensure(this, c);
   }
-  if (GSController.GetSetting("benchmark")) Bench_Start(this);
-
   while (true) {
+    // the benchmark starts when the setting is switched on (at load or in-game)
+    local on = GSController.GetSetting("benchmark") != 0;
+    if (on && !this.bench_on && this.bench == null && !this.bench_wait) Bench_Start(this);
+    this.bench_on = on;
     while (GSEventController.IsEventWaiting()) {
       local ev = GSEventController.GetNextEvent();
       try {

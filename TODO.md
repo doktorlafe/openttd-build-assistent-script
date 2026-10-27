@@ -28,6 +28,9 @@
 - [ ] **Best station place**: of the first 6 places that fit (flat land), the one with free straight tiles in front, facing the other end and (towns) covering more houses ("best of N (score S)" in the script log)
 - [ ] **Test run check**: track pieces that fail the test run make the route plan once more around them ("failed the test run ... planning the route again" in the Log)
 - [ ] **Story Book**: the same text is not sent again (fewer game commands while searching)
+- [ ] **Second track can get in**: double track keeps the 3 tiles in front of the second platform free during the first search (start station, and the end station without a loop) - benchmark route 10 (Úval - Zadní Vyševník) must no longer stall "1 tile from the goal"
+- [ ] **Fail fast**: second track whose station entry is taken fails at once ("the way into the station is taken"); a search that gets within 3 tiles of the goal and no closer for 20k tiles stops; second track stops after 40k tiles without getting closer
+- [ ] **Benchmark switch**: switching "benchmark" on in-game starts it; 4 long routes (~250 tiles) added
 
 ## Known issues
 

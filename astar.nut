@@ -22,6 +22,8 @@ class AStar {
   last_imp = 0;  // examined count when best_h last improved
   stall = 0;     // give up after this many tiles without getting closer (0 = never)
   stalled = false;
+  near_h = -1;     // closer than this to the goal ...
+  near_stall = 0;  // ... and no closer for this many tiles: give up (0 = never)
   best_node = -1; // node closest to the goal so far (live preview)
 
   /* How close the search got to the goal, 0..100. */
@@ -70,7 +72,9 @@ class AStar {
         this.last_imp = this.examined;
         this.best_node = cur;
       }
-      if (this.stall > 0 && this.examined - this.last_imp > this.stall) {
+      local idle = this.examined - this.last_imp;
+      if ((this.stall > 0 && idle > this.stall) ||
+          (this.near_stall > 0 && this.best_h >= 0 && this.best_h <= this.near_h && idle > this.near_stall)) {
         this.stalled = true;
         return -1;
       }
