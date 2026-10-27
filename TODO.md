@@ -34,6 +34,7 @@
 - [ ] **Suggestions step 2**: travel time at 3/4 top speed + half the full-load wait counts as cargo days ("~N days on the way" on each line, "days (fill F)" in SUG lines); Plan #N button fills A/B (rail), plans and opens the build page
 - [ ] **Ship line step 1** (oil rig -> refinery): A = oil rig, B = refinery, "Ship: plan" finds a dock place within reach of B that the water from the rig reaches (SHIP lines in the debug window), "Ship: build" builds dock + water depot + 1..3 ships with orders (full load at the rig)
 - [ ] **No levelling under track**: rail routes only use sloped tiles where the piece fits as the land is (foundation), steep slopes are avoided or bridged; levelling only under stations. Check: a long route over hills has no holes, no "HOLE" signs
+- [ ] **Autopilot**: button on the suggestions page OFF -> BUILD -> PLAN ONLY; BUILD builds route after route until switched off (next round right after a build, sources already connected are not taken again, up to 20 candidates); when nothing fits it waits ap_interval months; Suggest, plan the best suggestion within ap_budget_percent of the bank, skip a failed plan or one dearer than budget / 1.5x the estimate and plan the next; PLAN ONLY reports "WOULD BUILD", BUILD builds; never touches a player's job; mode saved; setting ap_allowed switches it off for everyone (AP lines in the debug window)
 - [ ] **Benchmark switch**: switching "benchmark" on in-game starts it; 4 long routes (~250 tiles) added
 
 ## Known issues

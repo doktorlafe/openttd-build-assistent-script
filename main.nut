@@ -14,6 +14,7 @@ require("vehicles.nut");
 require("ui.nut");
 require("suggest.nut");
 require("ship.nut");
+require("autopilot.nut");
 require("bench.nut");
 
 class LafeBuildAssistant extends GSController {
@@ -31,6 +32,7 @@ class LafeBuildAssistant extends GSController {
   bench = null;   // benchmark run (setting "benchmark"), not saved
   bench_wait = false;   // benchmark waits for the first company
   ships = null;         // planned ship line per company (Ship: plan -> Ship: build), not saved
+  ap = null;            // autopilot per company (autopilot.nut), only the mode is saved
   sugs = null;          // suggestions per company for the Plan buttons, not saved
   bench_on = false;     // last seen value of the "benchmark" setting
   turn = 0;       // round robin over the companies
@@ -72,7 +74,7 @@ function LafeBuildAssistant::Save()
     foreach (k, x in d) if (typeof x == "string" || (typeof x == "array" && k != "actions")) d.rawset(k, U_SaveSafe(x));
   }
   return { pages = U_SaveSafe(this.pages), picks = U_SaveSafe(this.picks), hist = U_SaveSafe(this.hist), logs = U_SaveSafe(this.logs),
-           jobs = jobs, queue = U_SaveSafe(this.queue), chains = U_SaveSafe(this.chains), bigst = this.bigst, loops = this.loops };
+           jobs = jobs, queue = U_SaveSafe(this.queue), chains = U_SaveSafe(this.chains), bigst = this.bigst, loops = this.loops, apm = Ap_SaveData(this) };
 }
 
 function LafeBuildAssistant::Load(version, data)
@@ -85,6 +87,7 @@ function LafeBuildAssistant::Load(version, data)
   if (data.rawin("chains")) this.chains = data.rawget("chains");
   if (data.rawin("bigst")) this.bigst = data.rawget("bigst");
   if (data.rawin("loops")) this.loops = data.rawget("loops");
+  if (data.rawin("apm")) Ap_LoadData(this, data.rawget("apm"));
   if (data.rawin("jobs")) {
     foreach (c, d in data.rawget("jobs")) this.jobs.rawset(c, Job_LoadData(d));
   }
@@ -93,7 +96,7 @@ function LafeBuildAssistant::Load(version, data)
 function LafeBuildAssistant::Start()
 {
   U_MapInit();   // before anything that steps over tiles
-  U_Log("i", "Lafe Build Assistant v3 (fast search, 2026-10-26) started, opcodes per tick: " + GSGameSettings.GetValue("script.script_max_opcode_till_suspend"));
+  U_Log("i", "Lafe Build Assistant v5 (autopilot, terrain-safe routes, 2026-10-27) started, opcodes per tick: " + GSGameSettings.GetValue("script.script_max_opcode_till_suspend"));
   this.Sleep(1);
   try { Preview_CleanLeftovers(); } catch (e) {}
   for (local i = 0; i < 15; i++) {
@@ -153,6 +156,7 @@ function LafeBuildAssistant::RunJobs()
     UI_Status(this, c, "Town list: planning " + job.names + " ...");
   }
   if (this.bench != null) Bench_Tick(this);
+  Ap_Tick(this);
   local active = [];
   foreach (c, job in this.jobs) if (Job_IsActive(job)) active.append(c);
   if (active.len() == 0) return false;
@@ -323,6 +327,10 @@ function LafeBuildAssistant::PlanList(company, p)
 
 function LafeBuildAssistant::OnButton(company, name)
 {
+  if (name == "a_mode") {
+    Ap_Toggle(this, company);
+    return;
+  }
   if (name == "s_go") {
     Sug_Run(this, company);
     return;

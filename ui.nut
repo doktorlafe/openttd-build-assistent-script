@@ -2,7 +2,7 @@
  * self = the controller: self.pages[company] = { page, el = { name -> element id }, ver } */
 
 /* Bump when the page layout changes: older pages are then built again. */
-const UI_VERSION = 15;
+const UI_VERSION = 16;
 
 /* Lines kept in the "Log" part of the page. */
 const UI_LOG_LINES = 6;
@@ -115,7 +115,9 @@ function UI_Ensure(self, company)
   local spage = GSStoryPage.New(company, "Build assistant - suggestions");
   if (spage != GSStoryPage.STORY_PAGE_INVALID) {
     p.spage <- spage;
-    foreach (it in Sug_Items()) {
+    local all = Sug_Items();
+    foreach (it in Ap_Items()) all.append(it);
+    foreach (it in all) {
       local id = GSStoryPage.NewElement(spage, it[1], it[2], U_Clip(it[3]));
       if (id != GSStoryPage.STORY_PAGE_ELEMENT_INVALID) p.el.rawset(it[0], id);
     }

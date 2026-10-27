@@ -35,6 +35,23 @@ See the pictures below for the basics. The detailed manual follows after them.
 A Game Script for **OpenTTD 15.x** (API 15) that builds transport connections for your company and buys
 vehicles for them. It is controlled entirely from the **Story Book**, where each company has its own page.
 
+## What's new in version 5
+
+- **Better route search.** Long routes (hundreds of tiles) are found quickly: the search no longer gets stuck in front
+  of a station, and a search that cannot get closer to its goal stops early instead of running for months of game time.
+  On the benchmark map the whole test set went from 46,438 to 2,141 ticks.
+- **Terrain handled like the best AIs do it.** The land under the track is **never levelled** any more. The route only
+  uses sloped tiles where the track fits the land as it is (on a foundation) and goes around steep slopes or bridges
+  them, as AIs built on the Pathfinder.Rail library do. Levelling single tiles used to tilt their neighbours and left
+  holes in the line. A station is only placed without levelling where its whole layout (platforms, switches, exits and
+  depot) is flat at one height; otherwise the whole area is levelled at once. Any hole that still appears gets a
+  **HOLE** sign on the map with the reason.
+- **Suggestions page.** Press **Suggest**: the script scans the industries and lists the 5 best cargo railways with the
+  income, running costs, build cost, cargo days and payback time. **Plan #N** plans the route in one click.
+- **Autopilot.** Switch it on and it builds route after route on its own until you switch it off (see section 2b).
+- **Ships from oil rigs.** **Ship: plan / Ship: build** connects an oil rig to a refinery: dock, depot and tankers.
+- The default **max_distance** is now 2000 tiles.
+
 **Features:**
 - **roads** between two towns (buses) or for cargo from industry to industry or town (trucks),
 - **railways**: single track (2 trains can pass in the stations thanks to path signals), or double track with signals,
@@ -44,6 +61,8 @@ vehicles for them. It is controlled entirely from the **Story Book**, where each
 - **route preview** with signs and a cost estimate before building,
 - **automatic vehicle purchase** including orders,
 - **town bus loop** (stops close together, a depot near the centre and a bus),
+- **suggestions** of the best cargo routes with an income estimate, and an **autopilot** that builds them,
+- **ship lines** from oil rigs to refineries,
 - **progress in percent** and a **Log** with the reasons of problems (no money, no station place, no route ...) right in the Story Book.
 
 > Only one Game Script can run in a game, so this script cannot run together with HardEconomy.
@@ -108,6 +127,27 @@ The percentage is also shown in the **page title**, e.g. "Build assistant [45%]"
 A page from a savegame of an older version is rebuilt into the new layout automatically and the history is kept.
 
 ---
+
+## 2b. Suggestions and autopilot
+
+The page **Build assistant - suggestions** has its own controls:
+
+- **Suggest** scans every industry that produced cargo last month and is not fully served, and looks for an industry
+  that accepts its cargo 30-150 tiles away. Each of the 5 best routes shows two lines: the profit per year and the
+  payback time, and the breakdown (income = amount x the game's payment for that cargo, distance and days on the way;
+  running costs; build cost = track + stations + trains). Travel time counts with 3/4 of the top speed of your fastest
+  engine plus half of the full-load waiting time. Industries on water are left out (rail cannot reach them).
+- **Plan #N** puts the two industries into A and B, plans the route and opens the build page with the exact cost.
+- **Autopilot** (orange button, OFF -> BUILD -> PLAN ONLY):
+  - **BUILD**: it runs Suggest, takes the best suggestion whose estimate fits the budget (*ap_budget_percent* of the
+    bank balance, default 50%), plans it and builds it with the trains. Then it starts again at once, route after
+    route, until you switch it off. A plan that fails, costs more than the budget or more than 1.5x the estimate is
+    skipped and the next suggestion is planned. A source it has already connected is not taken again.
+  - **PLAN ONLY**: the same, but it only writes what it would build ("WOULD BUILD ...") and spends nothing.
+  - When nothing can be built (no money, no paying route) it waits *ap_interval* months (default 1) and tries again.
+  - It never touches a job you started yourself; while one runs it waits. The mode is saved with the game.
+  - On a server the setting *ap_allowed* switches the autopilot off for every company.
+  - Every decision goes to the history lines under the button, the Log and the script debug window (lines `AP`).
 
 ## 3. Building a single connection (A → B)
 
@@ -414,6 +454,9 @@ reason are in the **Log**, all of them in the script debug window (AI/Game Scrip
 | `actions.nut` | build steps: execution, cost estimate in test mode |
 | `vehicles.nut` | vehicle purchase, train composition, orders |
 | `bench.nut` | benchmark mode: fixed test routes, results |
+| `suggest.nut` | suggestions page: industry scan, income and cost estimate, Plan #N |
+| `autopilot.nut` | autopilot: rounds of suggest, plan and build within a budget |
+| `ship.nut` | ship lines from oil rigs: dock place, search over water, depot, ships |
 | `advice.nut` | locomotive and wagon choice for bought trains |
 | `loop.nut` | town bus loop |
 | `preview.nut` | preview signs |

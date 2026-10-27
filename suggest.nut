@@ -185,7 +185,7 @@ function Sug_Scan(self, company)
   // remembered for the Plan buttons (not saved: after loading press Suggest again)
   if (self.sugs == null) self.sugs = {};
   local keep = [];
-  for (local i = 0; i < SUG_LINES && i < best.len(); i++) keep.append({ src = best[i].src, dst = best[i].dst, text = "Estimate: profit ~" + Sug_Money(best[i].profit) +
+  for (local i = 0; i < 20 && i < best.len(); i++) keep.append({ src = best[i].src, dst = best[i].dst, cost = best[i].cost, profit = best[i].profit, text = "Estimate: profit ~" + Sug_Money(best[i].profit) +
     "/year (income ~" + Sug_Money(best[i].income) + ", running ~" + Sug_Money(best[i].run) + "), build ~" + Sug_Money(best[i].cost) +
     ", pays back in " + best[i].payback + " months." });
   self.sugs.rawset(company, keep);

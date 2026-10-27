@@ -2,7 +2,7 @@ class LafeBuildAssistant extends GSInfo {
   function GetAuthor()      { return "lafe"; }
   function GetName()        { return "Lafe Build Assistant"; }
   function GetDescription() { return "Builds roads and railways for your company between towns and industries: bridges, tunnels, stations, depots, signals and vehicles. Control it from the Story Book."; }
-  function GetVersion()     { return 4; }
+  function GetVersion()     { return 5; }
   function MinVersionToLoad() { return 1; }   // older savegames (and the benchmark map) load with newer versions
   function GetDate()        { return "2026-10-25"; }
   function CreateInstance() { return "LafeBuildAssistant"; }
@@ -52,6 +52,9 @@ class LafeBuildAssistant extends GSInfo {
     Num("route_quality", "Route search: 0 = fastest, 1 = balanced, 2 = straightest/cheapest (slower)", 1, 0, 2);
     Flag("benchmark", "Benchmark: on loading, plan a fixed set of test routes (nothing is built) and report the results", 0);
     Flag("auto_confirm", "Build right away without asking for confirmation", 0);
+    Flag("ap_allowed", "Autopilot: companies may switch it on (suggestions page)", 1);
+    Num("ap_budget_percent", "Autopilot: one route may cost at most this % of the bank balance", 50, 5, 100);
+    Num("ap_interval", "Autopilot: months to wait when nothing could be built (no money, no paying route)", 1, 1, 24);
     Num("cost_limit_percent", "One build may cost at most this % of the bank balance", 100, 1, 100);
   }
 }

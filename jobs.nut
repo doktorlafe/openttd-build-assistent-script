@@ -721,6 +721,11 @@ function Job_Plan(self, job)
   job.blocked = {};
   if (job.rawin("near")) job.near = {};
   Job_ResetCache(job);
+  // autopilot: it decides itself (budget, estimate), no Build button
+  if (job.rawin("ap")) {
+    Ap_Planned(self, job);
+    return;
+  }
 
   UI_Diag(self, job.company, "i", "Planned " + summary + ".");
   if (job.est_nocash > 0)
@@ -906,6 +911,7 @@ function Job_Drop(self, job)
 function Job_Fail(self, job, text)
 {
   if (job.rawin("bench")) Bench_Record(self, job, false, text);
+  if (job.rawin("ap")) Ap_Failed(self, job, text);
   if (::g_nocash > 0) {
     text = "NOT ENOUGH MONEY (" + U_MoneyText(job.company) + "). " + ::g_nocash +
            " test build(s) failed for lack of money, so this may be the real reason: " + text;
@@ -1032,6 +1038,7 @@ function Job_Finish(self, job)
   UI_Status(self, job.company, text);
   UI_History(self, job.company, text);
   UI_Diag(self, job.company, "i", text);
+  if (job.rawin("ap")) Ap_Built(self, job, text);
   local where = job.news_tile;
   try {
     GSNews.Create(GSNews.NT_GENERAL, U_Clip(text), job.company, GSNews.NR_TILE, where);
