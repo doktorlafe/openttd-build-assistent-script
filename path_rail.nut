@@ -324,7 +324,7 @@ function PathRail_Nb(job, cur, kind)
     // enough for both
     if (c >= 0 && twin) {
       local tw = U_Step(n, (i + job.twin) % 4);
-      if (tw < 0 || (PathRail_Cost(job, tw) < 0 && !(job.reuse && PathRail_Usable(job, tw)))) extra += 2;
+      if (tw < 0 || (PathRail_Cost(job, tw) < 0 && !(job.reuse && PathRail_Usable(job, tw)))) extra += job.rawin("twin_pen") ? job.twin_pen : 2;
     }
     // run on the existing own track: much cheaper than new track (5), so lines to
     // the same place share one corridor and take little new land

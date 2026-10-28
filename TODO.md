@@ -10,6 +10,9 @@
 - [ ] Connect two ends: straight ends, a curve end, ends 2 tiles apart, a long way over a hill/river (bridge)
 - [ ] Connect double track: 2 clicks connect both tracks, side by side with no gap, ends on the right sides
 - [ ] Find stations from the depot: a loop of 4 towns comes out in travel order, Buy trains runs over all of them
+- [ ] Light: Plan road / Build road between two towns and between two industries (trucks)
+- [ ] Fleet care report: lines with waiting cargo and queues appear in the log, nothing bought
+- [ ] Fleet care on: a vehicle is added to a full line, a queued one is sold; mode kept after save/load
 - [ ] Connect: out of money in the middle, Build connection goes on; Cancel removes the signs
 
 ## Test (new since version 3, not committed yet)
@@ -61,3 +64,6 @@
 - [ ] Survey of nearby industries and ranked suggestions with build buttons
 - [ ] Autopilot with a budget, later cargo chains
 - [ ] Cargodist support for transfers (if the server uses it)
+- [ ] Auto: double track from station A and from station B, not joined; within a few days it gets connected beside itself.
+- [ ] Auto: a depot on the A-B line gets trains after the connection; a second depot on the same line does not.
+- [ ] Auto: a track end pointing nowhere near another end stays as it is; Auto off = nothing happens by itself.

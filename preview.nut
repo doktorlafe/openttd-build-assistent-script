@@ -28,7 +28,8 @@ function Preview_Clear(ids)
 /* Sign texts the script uses; List from signs leaves these alone. */
 function Preview_IsOwnSign(name)
 {
-  return name == "route" || name == "bridge" || name == "tunnel" || name == "search" || name == "search >";
+  return name == "route" || name == "bridge" || name == "tunnel" || name == "search" || name == "search >" ||
+         (name.len() > 5 && name.slice(0, 5) == "auto:");
 }
 
 /* Live view of the route search: signs along the most promising path so
@@ -55,7 +56,7 @@ function Preview_CleanLeftovers()
   local list = GSSignList();
   for (local s = list.Begin(); !list.IsEnd(); s = list.Next()) {
     local name = GSSign.GetName(s);
-    if (name == "search" || name == "search >") GSSign.RemoveSign(s);
+    if (name == "search" || name == "search >" || (name.len() > 5 && name.slice(0, 5) == "auto:")) GSSign.RemoveSign(s);
   }
 }
 

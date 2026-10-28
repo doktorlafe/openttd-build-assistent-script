@@ -24,6 +24,10 @@ class LafeBuildAssistant extends GSInfo {
 
   function GetSettings() {
     Flag("light_mode", "Light mode: only the train tools page (you build the tracks, the assistant buys trains, copies and wagons)", 0);
+    Flag("distance_tool", "Distance calculator in the Story Book (Manhattan distance between two clicked tiles)", 0);
+    Flag("auto_connect_full", "Classic mode: connect two of your track ends that point at each other by itself (like Auto in light mode)", 1);
+    Num("auto_range", "Light mode Auto: connect two track ends that point at each other up to N tiles apart", 1000, 10, 2000);
+    Num("auto_wait", "Light mode Auto: days a track end or depot must stay unchanged before the assistant acts", 1, 0, 30);
     Num("max_distance", "Maximum distance between the two ends (tiles)", 2000, 10, 2000);
     Num("search_limit", "Route search limit (thousands of tiles examined)", 500, 10, 5000);
     Num("search_per_tick", "Route search: tiles examined per step (higher = faster, more lag)", 2000, 100, 20000);

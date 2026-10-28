@@ -78,7 +78,7 @@ function LafeBuildAssistant::Save()
     foreach (k, x in d) if (typeof x == "string" || (typeof x == "array" && k != "actions")) d.rawset(k, U_SaveSafe(x));
   }
   return { pages = U_SaveSafe(this.pages), picks = U_SaveSafe(this.picks), hist = U_SaveSafe(this.hist), logs = U_SaveSafe(this.logs),
-           jobs = jobs, queue = U_SaveSafe(this.queue), chains = U_SaveSafe(this.chains), bigst = this.bigst, loops = this.loops, apm = Ap_SaveData(this) };
+           jobs = jobs, queue = U_SaveSafe(this.queue), chains = U_SaveSafe(this.chains), bigst = this.bigst, loops = this.loops, apm = Ap_SaveData(this), tfl = Tools_SaveData(this) };
 }
 
 function LafeBuildAssistant::Load(version, data)
@@ -92,6 +92,7 @@ function LafeBuildAssistant::Load(version, data)
   if (data.rawin("bigst")) this.bigst = data.rawget("bigst");
   if (data.rawin("loops")) this.loops = data.rawget("loops");
   if (data.rawin("apm")) Ap_LoadData(this, data.rawget("apm"));
+  if (data.rawin("tfl")) Tools_LoadData(this, data.rawget("tfl"));
   if (data.rawin("jobs")) {
     foreach (c, d in data.rawget("jobs")) this.jobs.rawset(c, Job_LoadData(d));
   }
@@ -104,6 +105,7 @@ function LafeBuildAssistant::Start()
   this.Sleep(1);
   try { Preview_CleanLeftovers(); } catch (e) {}
   this.light_on = Tools_IsLight();
+  ::g_dist_on <- Tools_DistOn();
   for (local i = 0; i < 15; i++) {
     local c = GSCompany.ResolveCompanyID(i);
     if (c != GSCompany.COMPANY_INVALID) UI_Ensure(this, c);
@@ -111,8 +113,10 @@ function LafeBuildAssistant::Start()
   while (true) {
     // light mode switched in-game: build the pages again in the other layout
     local light = Tools_IsLight();
-    if (light != this.light_on) {
+    // also when the distance calculator is switched on or off
+    if (light != this.light_on || Tools_DistOn() != ::g_dist_on) {
       this.light_on = light;
+      ::g_dist_on = Tools_DistOn();
       for (local i = 0; i < 15; i++) {
         local c = GSCompany.ResolveCompanyID(i);
         if (c != GSCompany.COMPANY_INVALID) UI_Ensure(this, c);
@@ -154,7 +158,8 @@ function LafeBuildAssistant::Start()
 function LafeBuildAssistant::RunJobs()
 {
   local tools_busy = Tools_Tick(this);
-  if (this.light_on) return tools_busy;   // light mode: no planner, suggestions or autopilot
+  // light mode: no town lists, benchmark or autopilot (the road planner runs)
+  if (!this.light_on) {
   // start the next leg of a town list when the company has no job
   foreach (c, legs in this.queue) {
     if (legs.len() == 0 || this.jobs.rawin(c)) continue;
@@ -173,9 +178,10 @@ function LafeBuildAssistant::RunJobs()
   }
   if (this.bench != null) Bench_Tick(this);
   Ap_Tick(this);
+  }
   local active = [];
   foreach (c, job in this.jobs) if (Job_IsActive(job)) active.append(c);
-  if (active.len() == 0) return false;
+  if (active.len() == 0) return tools_busy;
   this.turn = (this.turn + 1) % active.len();
   local company = active[this.turn];
   local job = this.jobs.rawget(company);
@@ -210,6 +216,7 @@ function LafeBuildAssistant::HandleEvent(ev)
   } else if (type == GSEvent.ET_STORYPAGE_TILE_SELECT) {
     local e = GSEventStoryPageTileSelect.Convert(ev);
     local company = e.GetCompanyID();
+    Tools_State(this, company).human <- true;
     local name = UI_ElementName(this, company, e.GetElementID());
     if (name == null) return;
     if (name.len() > 2 && name.slice(0, 2) == "t_") {
@@ -353,6 +360,7 @@ function LafeBuildAssistant::PlanList(company, p)
 
 function LafeBuildAssistant::OnButton(company, name)
 {
+  Tools_State(this, company).human <- true;   // a player clicked: auto connect may run for this company
   if (name.len() > 2 && name.slice(0, 2) == "t_") {
     Tools_OnButton(this, company, name);
     return;

@@ -2,7 +2,7 @@
  * self = the controller: self.pages[company] = { page, el = { name -> element id }, ver } */
 
 /* Bump when the page layout changes: older pages are then built again. */
-const UI_VERSION = 19;
+const UI_VERSION = 27;
 
 /* Lines kept in the "Log" part of the page. */
 const UI_LOG_LINES = 6;
@@ -73,6 +73,9 @@ function UI_Items()
     ["list_clear", GSStoryPage.SPET_BUTTON_PUSH, stop, "Clear"],
     ["ship_plan", GSStoryPage.SPET_BUTTON_PUSH, push, "Ship: plan (A = oil rig, B = refinery)"],
     ["ship_build", GSStoryPage.SPET_BUTTON_PUSH, go, "Ship: build"],
+    ["t_ma", GSStoryPage.SPET_BUTTON_TILE, pick2, "Distance: point A"],
+    ["t_mb", GSStoryPage.SPET_BUTTON_TILE, pick2, "Distance: point B"],
+    ["t_msel", GSStoryPage.SPET_TEXT, 0, "Distance: click point A and point B"],
     ["log_title", GSStoryPage.SPET_TEXT, 0, "--- Log (newest first) ---"]
   ];
   for (local i = 0; i < UI_LOG_LINES; i++) items.append(["d" + i, GSStoryPage.SPET_TEXT, 0, "-"]);
@@ -87,11 +90,15 @@ function UI_Items()
 
 function UI_Ensure(self, company)
 {
+  // light mode: no pages for an AI company (when the game can tell)
+  if (Tools_IsLight() && ("IsHuman" in GSCompany) && !GSCompany.IsHuman(company)) return false;
+  if (Tools_IsLight()) Tools_State(self, company);   // Auto watches from the start
   if (self.pages.rawin(company)) {
     local p = self.pages.rawget(company);
     if (GSStoryPage.IsValidStoryPage(p.page)) {
       local light = p.rawin("light") && p.light;
-      if (p.rawin("ver") && p.ver == UI_VERSION && light == Tools_IsLight()) return true;
+      local dist = p.rawin("dist") && p.dist;
+      if (p.rawin("ver") && p.ver == UI_VERSION && light == Tools_IsLight() && dist == Tools_DistOn()) return true;
       // a page from an older version: build it again in the current layout
       GSStoryPage.Remove(p.page);
     }
@@ -102,7 +109,7 @@ function UI_Ensure(self, company)
   }
   if (Tools_IsLight()) {
     // light mode: only the tools page (it is p.page) and its help page
-    local lp = { page = GSStoryPage.STORY_PAGE_INVALID, el = {}, ver = UI_VERSION, light = true };
+    local lp = { page = GSStoryPage.STORY_PAGE_INVALID, el = {}, ver = UI_VERSION, light = true, dist = Tools_DistOn() };
     if (!Tools_Pages(self, company, lp)) {
       GSLog.Error("Could not create the Story Book page for company " + company);
       return false;
@@ -116,10 +123,10 @@ function UI_Ensure(self, company)
     GSLog.Error("Could not create the Story Book page for company " + company);
     return false;
   }
-  local p = { page = page, el = {}, ver = UI_VERSION };
+  local p = { page = page, el = {}, ver = UI_VERSION, dist = Tools_DistOn() };
   self.pages.rawset(company, p);
   if (self.titles.rawin(company)) self.titles.rawdelete(company);
-  foreach (it in UI_Items()) {
+  foreach (it in Tools_DistFilter(UI_Items())) {
     local id = GSStoryPage.NewElement(page, it[1], it[2], U_Clip(it[3]));
     if (id != GSStoryPage.STORY_PAGE_ELEMENT_INVALID) p.el.rawset(it[0], id);
   }
@@ -191,12 +198,17 @@ function UI_Status(self, company, text)
   GSLog.Info(U_Clip("[" + company + "] " + text));
   UI_Dbg(self, company, "status: " + text);
   UI_SetText(self, company, "status", "Status: " + text);
+  if (Tools_IsLight()) UI_SetText(self, company, "t_status", "Status: " + text);
 }
 
 /* Progress line: phase name and a bar (pct < 0 = no bar). */
 function UI_Progress(self, company, phase, pct)
 {
   UI_SetText(self, company, "progress", "Progress: " + phase + (pct >= 0 ? " " + U_Bar(pct) : ""));
+  if (Tools_IsLight()) {   // light mode: the tools page keeps its title
+    UI_SetText(self, company, "t_status", "Status: " + phase + (pct >= 0 ? " " + U_Bar(pct) : ""));
+    return;
+  }
   // the page title is always visible, even when the progress line is scrolled away
   if (!self.pages.rawin(company)) return;
   local page = self.pages.rawget(company).page;
@@ -213,6 +225,10 @@ function UI_Progress(self, company, phase, pct)
 function UI_Ready(self, company, text)
 {
   UI_SetText(self, company, "progress", "Progress: >>> READY TO BUILD <<< " + text);
+  if (Tools_IsLight()) {
+    UI_SetText(self, company, "t_status", "Status: READY - press Build road. " + text);
+    return;
+  }
   if (!self.pages.rawin(company)) return;
   local page = self.pages.rawget(company).page;
   if (!GSStoryPage.IsValidStoryPage(page)) return;
@@ -270,6 +286,7 @@ function UI_Diag(self, company, level, text)
   if (d.len() > 0 && d[0] == line) return;
   d.insert(0, U_Clip(line));
   while (d.len() > UI_LOG_LINES) d.pop();
+  if (Tools_IsLight()) Tools_Log(self, company, (level == "!" ? "[!] " : "") + text);
   for (local i = 0; i < UI_LOG_LINES; i++) UI_SetText(self, company, "d" + i, i < d.len() ? d[i] : "-");
 }
 

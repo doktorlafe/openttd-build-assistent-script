@@ -171,8 +171,27 @@ Switch on the setting *light_mode* (also in a running game). You build tracks, s
   depot or the nearest depot of its rail type.
 - **Fill wagons:** click the button, then a train. It goes to a depot, gets wagons of its last wagon's type (or loses
   some) to fit the shortest platform in its orders, and leaves again.
+- **Buses / trucks between two places:** *A* and *B* (a town or an industry), *Plan road*, *Build road*: the road
+  planner of the full assistant builds the road, stops, a depot and *veh_road* vehicles.
+- **Fleet care:** *off / report / do it*. Once a month every line (vehicles with shared orders) is checked: more than
+  2 loads waiting at its first station = one more vehicle; 2+ vehicles stuck in a queue with little cargo = one goes to
+  the depot and is sold. Only lines older than 3 months that make money; at most 8 trains / 15 road vehicles a line.
+  *Report* only writes to the log what it would do. The mode is saved with the game.
 - **Bus loop in a town:** the same as on the full page: click a town, it gets *loop_stops* bus stops (5), a depot
   and *veh_loop* buses (1).
+- **Auto** (on at start, the button switches it): the assistant watches the map, you click nothing:
+  - two ends of your track that point at each other, up to `auto_range` tiles apart (1000) and unchanged for `auto_wait`
+    days (1); it follows your track from your stations and depots once a day, get connected; a double track as a pair, the second track right beside the first;
+  - a depot whose track reaches 2+ of your stations that no train serves yet gets trains (How many);
+  - fleet care is on;
+  - a click on a depot buys at once, a way found by Find the way (or Plan road) is built without pressing Build, and after
+    running out of money the building goes on by itself a week later.
+  Off = everything waits for your buttons.
+- **Classic mode** (setting `auto_connect_full`, on): the track end connection of Auto runs there too (not the trains),
+  after your first click in the Story Book and not while a planned route is being built. Messages go to the status and log
+  of the main page.
+- **Double track:** click the button, then a plain tile of a single track: a second track is built right beside it up to
+  the next switch, station, depot or end (curves, bridges, tunnels too), on the side where it fits. Its ends stay open.
 - **Find stations from the depot:** pick the depot and press this: the script follows your track from the depot and
   lists every station it reaches in travel order (a loop of towns too). *Buy trains* then runs over all of them.
 - **Connect two track ends:** click *End 1* and *End 2* on the last tile of two tracks that stop (dead ends) and
