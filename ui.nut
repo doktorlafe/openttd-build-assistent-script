@@ -2,7 +2,7 @@
  * self = the controller: self.pages[company] = { page, el = { name -> element id }, ver } */
 
 /* Bump when the page layout changes: older pages are then built again. */
-const UI_VERSION = 16;
+const UI_VERSION = 19;
 
 /* Lines kept in the "Log" part of the page. */
 const UI_LOG_LINES = 6;
@@ -90,7 +90,8 @@ function UI_Ensure(self, company)
   if (self.pages.rawin(company)) {
     local p = self.pages.rawget(company);
     if (GSStoryPage.IsValidStoryPage(p.page)) {
-      if (p.rawin("ver") && p.ver == UI_VERSION) return true;
+      local light = p.rawin("light") && p.light;
+      if (p.rawin("ver") && p.ver == UI_VERSION && light == Tools_IsLight()) return true;
       // a page from an older version: build it again in the current layout
       GSStoryPage.Remove(p.page);
     }
@@ -98,6 +99,17 @@ function UI_Ensure(self, company)
     if (p.rawin("dpage") && GSStoryPage.IsValidStoryPage(p.dpage)) GSStoryPage.Remove(p.dpage);
     if (p.rawin("hpage") && GSStoryPage.IsValidStoryPage(p.hpage)) GSStoryPage.Remove(p.hpage);
     self.pages.rawdelete(company);
+  }
+  if (Tools_IsLight()) {
+    // light mode: only the tools page (it is p.page) and its help page
+    local lp = { page = GSStoryPage.STORY_PAGE_INVALID, el = {}, ver = UI_VERSION, light = true };
+    if (!Tools_Pages(self, company, lp)) {
+      GSLog.Error("Could not create the Story Book page for company " + company);
+      return false;
+    }
+    self.pages.rawset(company, lp);
+    Tools_Selection(self, company);
+    return true;
   }
   local page = GSStoryPage.New(company, "Build assistant");
   if (page == GSStoryPage.STORY_PAGE_INVALID) {

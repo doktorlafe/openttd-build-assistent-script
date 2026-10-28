@@ -16,6 +16,7 @@ require("suggest.nut");
 require("ship.nut");
 require("autopilot.nut");
 require("bench.nut");
+require("tools.nut");
 
 class LafeBuildAssistant extends GSController {
   pages = null;   // company -> { page, el }
@@ -35,6 +36,8 @@ class LafeBuildAssistant extends GSController {
   ap = null;            // autopilot per company (autopilot.nut), only the mode is saved
   sugs = null;          // suggestions per company for the Plan buttons, not saved
   bench_on = false;     // last seen value of the "benchmark" setting
+  tools = null;         // light mode train tools per company (tools.nut), not saved
+  light_on = false;     // last seen value of the "light_mode" setting
   turn = 0;       // round robin over the companies
 
   constructor() {
@@ -49,6 +52,7 @@ class LafeBuildAssistant extends GSController {
     this.chains = {};
     this.bigst = {};
     this.loops = {};
+    this.tools = {};
   }
 
   function Start();
@@ -96,14 +100,24 @@ function LafeBuildAssistant::Load(version, data)
 function LafeBuildAssistant::Start()
 {
   U_MapInit();   // before anything that steps over tiles
-  U_Log("i", "Lafe Build Assistant v5 (autopilot, terrain-safe routes, 2026-10-27) started, opcodes per tick: " + GSGameSettings.GetValue("script.script_max_opcode_till_suspend"));
+  U_Log("i", "Lafe Build Assistant v6 (light mode train tools, 2026-10-28) started, opcodes per tick: " + GSGameSettings.GetValue("script.script_max_opcode_till_suspend"));
   this.Sleep(1);
   try { Preview_CleanLeftovers(); } catch (e) {}
+  this.light_on = Tools_IsLight();
   for (local i = 0; i < 15; i++) {
     local c = GSCompany.ResolveCompanyID(i);
     if (c != GSCompany.COMPANY_INVALID) UI_Ensure(this, c);
   }
   while (true) {
+    // light mode switched in-game: build the pages again in the other layout
+    local light = Tools_IsLight();
+    if (light != this.light_on) {
+      this.light_on = light;
+      for (local i = 0; i < 15; i++) {
+        local c = GSCompany.ResolveCompanyID(i);
+        if (c != GSCompany.COMPANY_INVALID) UI_Ensure(this, c);
+      }
+    }
     // the benchmark starts when the setting is switched on (at load or in-game)
     local on = GSController.GetSetting("benchmark") != 0;
     if (on && !this.bench_on && this.bench == null && !this.bench_wait) Bench_Start(this);
@@ -139,6 +153,8 @@ function LafeBuildAssistant::Start()
 /* Runs one step of the next active job. Returns true if any job is active. */
 function LafeBuildAssistant::RunJobs()
 {
+  local tools_busy = Tools_Tick(this);
+  if (this.light_on) return tools_busy;   // light mode: no planner, suggestions or autopilot
   // start the next leg of a town list when the company has no job
   foreach (c, legs in this.queue) {
     if (legs.len() == 0 || this.jobs.rawin(c)) continue;
@@ -195,6 +211,11 @@ function LafeBuildAssistant::HandleEvent(ev)
     local e = GSEventStoryPageTileSelect.Convert(ev);
     local company = e.GetCompanyID();
     local name = UI_ElementName(this, company, e.GetElementID());
+    if (name == null) return;
+    if (name.len() > 2 && name.slice(0, 2) == "t_") {
+      Tools_OnTile(this, company, name, e.GetTile());
+      return;
+    }
     if (name == "loop_pick") {
       local town = GSTile.GetClosestTown(e.GetTile());
       if (!GSTown.IsValidTown(town)) {
@@ -235,6 +256,11 @@ function LafeBuildAssistant::HandleEvent(ev)
       p.b = target;
     }
     UI_Selection(this, company);
+  } else if (type == GSEvent.ET_STORYPAGE_VEHICLE_SELECT) {
+    local e = GSEventStoryPageVehicleSelect.Convert(ev);
+    local company = e.GetCompanyID();
+    local name = UI_ElementName(this, company, e.GetElementID());
+    if (name != null) Tools_OnVehicle(this, company, name, e.GetVehicleID());
   } else if (type == GSEvent.ET_STORYPAGE_BUTTON_CLICK) {
     local e = GSEventStoryPageButtonClick.Convert(ev);
     local company = e.GetCompanyID();
@@ -327,6 +353,10 @@ function LafeBuildAssistant::PlanList(company, p)
 
 function LafeBuildAssistant::OnButton(company, name)
 {
+  if (name.len() > 2 && name.slice(0, 2) == "t_") {
+    Tools_OnButton(this, company, name);
+    return;
+  }
   if (name == "a_mode") {
     Ap_Toggle(this, company);
     return;

@@ -1,5 +1,17 @@
 # To-do
 
+## Test (version 6, light mode)
+
+- [ ] light_mode on: only the pages tools + help; switching it off brings the full pages back
+- [ ] Buy trains: coal mine > power plant gives a coal train as long as the platform, full load at station 1
+- [ ] Buy trains with How many = 3: three trains with shared orders
+- [ ] Copies of a train: N copies, also when the train is out on the line (nearest depot)
+- [ ] Fill wagons: a short train goes to a depot, gets wagons, leaves; a too long one loses wagons
+- [ ] Connect two ends: straight ends, a curve end, ends 2 tiles apart, a long way over a hill/river (bridge)
+- [ ] Connect double track: 2 clicks connect both tracks, side by side with no gap, ends on the right sides
+- [ ] Find stations from the depot: a loop of 4 towns comes out in travel order, Buy trains runs over all of them
+- [ ] Connect: out of money in the middle, Build connection goes on; Cancel removes the signs
+
 ## Test (new since version 3, not committed yet)
 
 - [ ] **My tracks** (experimental): new railway runs on your own tracks and joins them; falls back to all-new track when it finds no way

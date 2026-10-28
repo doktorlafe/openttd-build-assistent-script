@@ -2,13 +2,13 @@ class LafeBuildAssistant extends GSInfo {
   function GetAuthor()      { return "lafe"; }
   function GetName()        { return "Lafe Build Assistant"; }
   function GetDescription() { return "Builds roads and railways for your company between towns and industries: bridges, tunnels, stations, depots, signals and vehicles. Control it from the Story Book."; }
-  function GetVersion()     { return 5; }
+  function GetVersion()     { return 6; }
   function MinVersionToLoad() { return 1; }   // older savegames (and the benchmark map) load with newer versions
-  function GetDate()        { return "2026-10-25"; }
+  function GetDate()        { return "2026-10-28"; }
   function CreateInstance() { return "LafeBuildAssistant"; }
   function GetShortName()   { return "LBAS"; }
   function GetAPIVersion()  { return "15"; }
-  function GetURL()         { return ""; }
+  function GetURL()         { return "https://github.com/doktorlafe/openttd-build-assistent-script"; }
 
   function Num(name, desc, value, lo, hi) {
     AddSetting({name = name, description = desc,
@@ -23,6 +23,7 @@ class LafeBuildAssistant extends GSInfo {
   }
 
   function GetSettings() {
+    Flag("light_mode", "Light mode: only the train tools page (you build the tracks, the assistant buys trains, copies and wagons)", 0);
     Num("max_distance", "Maximum distance between the two ends (tiles)", 2000, 10, 2000);
     Num("search_limit", "Route search limit (thousands of tiles examined)", 500, 10, 5000);
     Num("search_per_tick", "Route search: tiles examined per step (higher = faster, more lag)", 2000, 100, 20000);

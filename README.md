@@ -35,6 +35,11 @@ See the pictures below for the basics. The detailed manual follows after them.
 A Game Script for **OpenTTD 15.x** (API 15) that builds transport connections for your company and buys
 vehicles for them. It is controlled entirely from the **Story Book**, where each company has its own page.
 
+## What's new in version 6
+
+- **Light mode** (setting *light_mode*): for players who want to build the tracks themselves. The Story Book shows only
+  the page **Build assistant - tools**, the planner, suggestions and autopilot are off. See section 2c.
+
 ## What's new in version 5
 
 - **Better route search.** Long routes (hundreds of tiles) are found quickly: the search no longer gets stuck in front
@@ -153,6 +158,31 @@ The page **Build assistant - suggestions** has its own controls:
     early. A job you started yourself is never touched.
   - On a server the setting *ap_allowed* switches the autopilot off for every company.
   - Every decision goes to the history lines under the button, the Log and the script debug window (lines `AP`).
+
+## 2c. Light mode: train tools
+
+Switch on the setting *light_mode* (also in a running game). You build tracks, stations and depots yourself; the page
+**Build assistant - tools** takes the clicking out of buying trains:
+
+- **Train on a route:** click *Depot*, *Station 1 (loads)* and *Station 2 (unloads)* on the map, choose *How many*
+  (1 / 2 / 3 / 5) and press *Buy trains*. The best engine for the depot's rail type, as many wagons as fit the shorter
+  platform, the cargo that station 1 gets (or has around it) and station 2 takes, orders with full load at station 1.
+- **Copies of a train:** click the button, then a train. It gets *How many* copies with shared orders, bought in its
+  depot or the nearest depot of its rail type.
+- **Fill wagons:** click the button, then a train. It goes to a depot, gets wagons of its last wagon's type (or loses
+  some) to fit the shortest platform in its orders, and leaves again.
+- **Bus loop in a town:** the same as on the full page: click a town, it gets *loop_stops* bus stops (5), a depot
+  and *veh_loop* buses (1).
+- **Find stations from the depot:** pick the depot and press this: the script follows your track from the depot and
+  lists every station it reaches in travel order (a loop of towns too). *Buy trains* then runs over all of them.
+- **Connect two track ends:** click *End 1* and *End 2* on the last tile of two tracks that stop (dead ends) and
+  press *Find the way*. Double track: click one track of each pair, the one beside it is connected too, right beside
+  the first one with no gap (with a little room only where it cannot fit). The same route search as the full assistant (bridges, tunnels, no levelling under the track)
+  finds a way, shows it with signs and the price; *Build connection* builds it (after running out of money it goes on
+  where it stopped), *Cancel* removes the signs.
+
+The code is in `tools.nut`; it uses the vehicle code and, for connecting track ends, the route search of the full
+assistant, so it can become a script of its own later.
 
 ## 3. Building a single connection (A → B)
 
@@ -461,6 +491,7 @@ reason are in the **Log**, all of them in the script debug window (AI/Game Scrip
 | `bench.nut` | benchmark mode: fixed test routes, results |
 | `suggest.nut` | suggestions page: industry scan, income and cost estimate, Plan #N |
 | `autopilot.nut` | autopilot: rounds of suggest, plan and build within a budget |
+| `tools.nut` | light mode: tools page (train on a route, copies, fill wagons, connect two track ends) |
 | `ship.nut` | ship lines from oil rigs: dock place, search over water, depot, ships |
 | `advice.nut` | locomotive and wagon choice for bought trains |
 | `loop.nut` | town bus loop |
@@ -473,3 +504,8 @@ reason are in the **Log**, all of them in the script debug window (AI/Game Scrip
   and is stored in the savegame.
 - **Search state lives in the job** (`job`). Tile caches (`cc`, `xc`, `bc`, `tc`) save game API calls.
 - **Company:** everything that builds or buys runs in `GSCompanyMode(company)`.
+
+## License
+
+Lafe Build Assistant is free software, licensed under the **GNU General Public License version 2** (see `license.txt`).
+Source code: https://github.com/doktorlafe/openttd-build-assistent-script

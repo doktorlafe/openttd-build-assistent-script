@@ -41,7 +41,8 @@ function PathRail_Cost(job, t)
       // second track: right next to the first is very cheap, anywhere else expensive,
       // so the two tracks run side by side and take as little land as possible
       // (only on tiles where track can be laid at all)
-      if (job.rawin("near") && job.near.len() > 0) c = job.near.rawin(t) ? 1 : c + 6;
+      // (tight: only right beside it, no gap at all - light mode connections)
+      if (job.rawin("near") && job.near.len() > 0) c = job.near.rawin(t) ? 1 : ((job.rawin("tight") && job.tight) ? -1 : c + 6);
     }
   }
   job.cc.rawset(t, c);
